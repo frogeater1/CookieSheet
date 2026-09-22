@@ -1,5 +1,8 @@
 using System;
 using System.Text.Json.Serialization;
+using System.Collections.Generic;
+using System.Linq;
+using CookieSheet.Refunds;
 
 namespace CookieSheet.Data;
 
@@ -18,24 +21,35 @@ public class order
     public string[] productModel { get; set; }
 
     public int[] productCount { get; set; }
+    public decimal[] productUnitPrice { get; set; } = [];
+    public string[] productId { get; set; } = [];
+
+    [JsonIgnore] public List<ProductRefundResult> ProductRefunds { get; set; } = [];
+
+    public List<OrderedProduct> GetOrderedProducts()
+    {
+        var names = productName ?? [];
+        var models = productModel ?? [];
+        var counts = productCount ?? [];
+        return Enumerable.Range(0, Math.Max(names.Length, Math.Max(models.Length, counts.Length)))
+            .Select(i => new OrderedProduct(names.ElementAtOrDefault(i) ?? "", models.ElementAtOrDefault(i) ?? "",
+                counts.ElementAtOrDefault(i), (productUnitPrice ?? []).ElementAtOrDefault(i), (productId ?? []).ElementAtOrDefault(i) ?? ""))
+            .ToList();
+    }
+
+    public void ApplyRefunds(IEnumerable<RefundRecord> records) =>
+        ProductRefunds = RefundCalculator.Calculate(orderId, GetOrderedProducts(), records);
 
     public decimal price { get; set; }
     public bool sended { get; set; }
 
     public string tag { get; set; }
 
-    public string ProductDetails
+    [JsonIgnore] public string ProductDetails
     {
         get
         {
-            var details = new System.Collections.Generic.List<string>();
-            for (var i = 0; i < Math.Min(productModel.Length, productCount.Length); i++)
-            {
-                var name = string.IsNullOrEmpty(productModel[i]) ? productName[i] : productModel[i];
-                details.Add($"{name} x{productCount[i]}");
-            }
-
-            return string.Join("; ", details);
+            return string.Join("；", ProductRefunds.Select(p => p.DisplayText));
         }
     }
 

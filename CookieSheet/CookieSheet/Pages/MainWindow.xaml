@@ -18,7 +18,9 @@
         <NavigationView x:Name="NavView" SelectionChanged="NavView_SelectionChanged" Loaded="NavView_Loaded" IsBackButtonVisible="Collapsed">
             <NavigationView.MenuItems>
                 <NavigationViewItem Icon="Upload" Content="数据导入" Tag="Import" />
-                <NavigationViewItem Icon="Find" Content="查询与统计" Tag="Query" />
+                <NavigationViewItem Icon="List" Content="订单查询" Tag="Orders" />
+                <NavigationViewItem Icon="Find" Content="用户查询" Tag="Query" />
+                <NavigationViewItem Icon="Document" Content="待匹配退款" Tag="UnmatchedRefunds" />
             </NavigationView.MenuItems>
             <Frame x:Name="ContentFrame"/>
         </NavigationView>

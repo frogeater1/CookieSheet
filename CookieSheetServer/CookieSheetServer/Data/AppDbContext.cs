@@ -1,4 +1,5 @@
 using CookieSheetServer.Data.Entities;
+using CookieSheet.Refunds;
 using Microsoft.EntityFrameworkCore;
 
 namespace CookieSheetServer.Data;
@@ -11,10 +12,18 @@ public class AppDbContext : DbContext
 
     public DbSet<user> user { get; set; }
     public DbSet<order> order { get; set; }
+    public DbSet<RefundRecord> refunds { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<RefundRecord>().HasKey(r => r.refundId);
+        modelBuilder.Entity<RefundRecord>().HasIndex(r => r.orderId);
+        modelBuilder.Entity<RefundRecord>().ToTable("refunds", table =>
+            table.HasCheckConstraint("CK_refunds_successful_status", "\"status\" = '退款成功'"));
+        modelBuilder.Entity<order>().Property(o => o.productUnitPrice).HasDefaultValueSql("ARRAY[]::numeric[]");
+        modelBuilder.Entity<order>().Property(o => o.productId).HasDefaultValueSql("ARRAY[]::text[]");
 
         // Configure OrderId to be the key
         modelBuilder.Entity<order>()

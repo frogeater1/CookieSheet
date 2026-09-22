@@ -18,6 +18,7 @@
     </ItemGroup>
 
     <ItemGroup>
+      <ProjectReference Include="..\CookieSheet.Refunds\CookieSheet.Refunds.csproj" />
       <Content Include="..\.dockerignore">
         <Link>.dockerignore</Link>
       </Content>

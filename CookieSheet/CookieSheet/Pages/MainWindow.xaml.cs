@@ -30,6 +30,9 @@ namespace CookieSheet
         {
             // DebugConsole.Toggle();
             InitializeComponent();
+            if (Uri.TryCreate(Environment.GetEnvironmentVariable("COOKIESHEET_API_URL"), UriKind.Absolute, out var api)
+                && api.IsLoopback)
+                Title += "（本地测试）";
         }
 
         private void NavView_Loaded(object sender, RoutedEventArgs e)
@@ -54,6 +57,12 @@ namespace CookieSheet
                         break;
                     case "Query":
                         ContentFrame.Navigate(typeof(QueryPage));
+                        break;
+                    case "Orders":
+                        ContentFrame.Navigate(typeof(OrderListPage));
+                        break;
+                    case "UnmatchedRefunds":
+                        ContentFrame.Navigate(typeof(UnmatchedRefundsPage));
                         break;
                 }
             }

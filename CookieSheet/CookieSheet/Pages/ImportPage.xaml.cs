@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using CookieSheet.Data;
 using CookieSheet.Helpers;
 using MiniExcelLibs.Attributes;
+using CookieSheet.Refunds;
 
 namespace CookieSheet
 {
@@ -23,6 +24,9 @@ namespace CookieSheet
         [ExcelColumnName("商品名称")] public string 商品名称 { get; set; } = "";
         [ExcelColumnName("商品型号")] public string 商品型号 { get; set; } = "";
         [ExcelColumnName("商品件数")] public string 商品件数 { get; set; } = "";
+        [ExcelColumnName("商品ID")] public string 商品ID { get; set; } = "";
+        [ExcelColumnName("商品单价")] public string 商品单价 { get; set; } = "";
+        [ExcelColumnName("运费")] public string 运费 { get; set; } = "";
         [ExcelColumnName("实付金额")] public string 实付金额 { get; set; } = "";
         [ExcelColumnName("订单编号")] public string 订单编号 { get; set; } = "";
         [ExcelColumnName("下单时间")] public string 下单时间 { get; set; } = "";
@@ -40,6 +44,7 @@ namespace CookieSheet
 
         private async void OnImportClick(object sender, RoutedEventArgs e)
         {
+            SetImportEnabled(false);
             try
             {
                 StatusTextBlock.Text = "正在选择文件...";
@@ -76,10 +81,9 @@ namespace CookieSheet
                             continue;
                         }
 
-                        if (r.退款状态 == "退款完成" || r.订单状态 == "已关闭")
+                        if (r.商品名称 == "补邮" && (r.退款状态 == "退款完成" || r.订单状态 == "已关闭"))
                         {
-                            // In a real client-server app, we might need a DELETE endpoint.
-                            // But for now, we just skip these.
+                            // Refunded regular orders must remain available for later refund reconciliation.
                             continue;
                         }
 
@@ -143,6 +147,8 @@ namespace CookieSheet
                                     productName = r.商品名称.Split(';'),
                                     productModel = (r.商品型号 == "" ? r.商品名称 : r.商品型号).Split(';'),
                                     productCount = ParseProductCounts(r.商品件数),
+                                    productId = r.商品ID.Split(';'),
+                                    productUnitPrice = OrderImportPricing.Read(r.商品单价, r.运费, decimal.Parse(r.实付金额), ParseProductCounts(r.商品件数)),
                                     price = decimal.Parse(r.实付金额),
                                     sended = false,
                                     tel = r.手机号,
@@ -160,6 +166,8 @@ namespace CookieSheet
                                 order.productName = r.商品名称.Split(';');
                                 order.productModel = (r.商品型号 == "" ? r.商品名称 : r.商品型号).Split(';');
                                 order.productCount = ParseProductCounts(r.商品件数);
+                                order.productId = r.商品ID.Split(';');
+                                order.productUnitPrice = OrderImportPricing.Read(r.商品单价, r.运费, decimal.Parse(r.实付金额), order.productCount);
                                 order.price = decimal.Parse(r.实付金额);
                                 order.tel = r.手机号;
                                 order.tag = Path.GetFileNameWithoutExtension(file.Name);
@@ -183,6 +191,7 @@ namespace CookieSheet
                     await Process满赠(Path.GetFileNameWithoutExtension(file.Name), await DialogHelper.ShowConfirmationDialogAsync(XamlRoot, "提示", "是否要计算满赠？"));
                     
                     await ProcessSet赠(Path.GetFileNameWithoutExtension(file.Name), await DialogHelper.ShowConfirmationDialogAsync(XamlRoot, "提示", "是否要计算Set赠？"));
+                    await ApiService.RefreshCacheAsync();
 
 
                     StatusTextBlock.Text = $"导入成功！新增/更新用户: {userAdded}, 新增订单: {orderAdded}。";
@@ -202,6 +211,58 @@ namespace CookieSheet
                 StatusTextBlock.Text = $"错误: {ex.Message}";
                 DebugConsole.Log(ex.ToString());
             }
+            finally { SetImportEnabled(true); }
+        }
+
+        private void SetImportEnabled(bool enabled)
+        {
+            OrderImportButton.IsEnabled = enabled;
+            RefundImportButton.IsEnabled = enabled;
+        }
+
+        private async void OnRefundImportClick(object sender, RoutedEventArgs e)
+        {
+            SetImportEnabled(false);
+            var saved = false;
+            try
+            {
+                var picker = new Windows.Storage.Pickers.FileOpenPicker();
+                WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(App.CurrentWindow));
+                picker.FileTypeFilter.Add(".xlsx");
+                var file = await picker.PickSingleFileAsync();
+                if (file == null) { StatusTextBlock.Text = "操作已取消。"; return; }
+                StatusTextBlock.Text = "正在读取退款表…";
+                await using var stream = await file.OpenStreamForReadAsync();
+                var result = await Task.Run(() => RefundImportReader.Read(stream, file.Name));
+                if (result.Records.Count == 0)
+                {
+                    StatusTextBlock.Text = $"没有可导入的成功退款记录，已跳过 {result.SkippedRows} 条非成功记录。";
+                    return;
+                }
+                StatusTextBlock.Text = $"正在保存 {result.Records.Count} 条退款记录…";
+                var summary = await ApiService.SaveRefundsBatchAsync(result.Records);
+                saved = true;
+                await ApiService.RefreshCacheAsync();
+                var orders = (await ApiService.GetCachedOrdersAsync()).ToDictionary(o => o.orderId);
+                var matchable = result.Records.Where(r => !RefundRules.IsPostageProduct(r.productName)).ToList();
+                var postage = result.Records.Count - matchable.Count;
+                var unmatched = matchable.Count(r => !orders.ContainsKey(r.orderId));
+                var unmatchedProduct = matchable.Count(r => orders.TryGetValue(r.orderId, out var order)
+                    && !order.GetOrderedProducts().Any(p => RefundCalculator.Matches(p, r)));
+                var affected = matchable.Select(r => r.orderId).ToHashSet();
+                var review = orders.Values.Where(o => affected.Contains(o.orderId))
+                    .Sum(o => o.ProductRefunds.Count(p => p.Status == ProductRefundStatus.NeedsReview));
+                StatusTextBlock.Text = $"退款导入完成：新增 {summary.Added} 条，更新 {summary.Updated} 条，保留较新记录 {summary.Unchanged} 条。\n"
+                    + $"跳过非成功退款 {result.SkippedRows + summary.Skipped} 条；文件内重复退款编号合并 {result.DuplicateRows} 条；补邮退款 {postage} 条不参与匹配。\n"
+                    + $"等待原订单 {unmatched} 条，未匹配商品 {unmatchedProduct} 条，数量待核对 {review} 项。\n"
+                    + "成功退款记录已独立保存；后续导入原订单会自动匹配。";
+            }
+            catch (Exception ex)
+            {
+                StatusTextBlock.Text = saved ? $"退款已保存，但刷新失败：{ex.Message}。可点击查询页的“刷新数据”重试。" : $"退款导入失败：{ex.Message}";
+                DebugConsole.Log(ex.ToString());
+            }
+            finally { SetImportEnabled(true); }
         }
 
         private async Task Process满赠(string tag, bool process)
@@ -247,6 +308,8 @@ namespace CookieSheet
                 var nameList = order.productName.ToList();
                 var modelList = order.productModel.ToList();
                 var countList = order.productCount.ToList();
+                var priceList = Enumerable.Range(0, nameList.Count).Select(i => order.productUnitPrice.ElementAtOrDefault(i)).ToList();
+                var idList = Enumerable.Range(0, nameList.Count).Select(i => order.productId.ElementAtOrDefault(i) ?? "").ToList();
 
                 for (int i = nameList.Count - 1; i >= 0; i--)
                 {
@@ -255,6 +318,8 @@ namespace CookieSheet
                         if (i < nameList.Count) nameList.RemoveAt(i);
                         if (i < modelList.Count) modelList.RemoveAt(i);
                         if (i < countList.Count) countList.RemoveAt(i);
+                        priceList.RemoveAt(i);
+                        idList.RemoveAt(i);
                         changed = true;
                     }
                 }
@@ -262,6 +327,8 @@ namespace CookieSheet
                 order.productName = nameList.ToArray();
                 order.productModel = modelList.ToArray();
                 order.productCount = countList.ToArray();
+                order.productUnitPrice = priceList.ToArray();
+                order.productId = idList.ToArray();
             }
             return changed;
         }
@@ -271,14 +338,20 @@ namespace CookieSheet
             var nameList = order.productName.ToList();
             var modelList = order.productModel.ToList();
             var countList = order.productCount.ToList();
+            var priceList = Enumerable.Range(0, nameList.Count).Select(i => order.productUnitPrice.ElementAtOrDefault(i)).ToList();
+            var idList = Enumerable.Range(0, nameList.Count).Select(i => order.productId.ElementAtOrDefault(i) ?? "").ToList();
 
             nameList.Add(name);
             modelList.Add(model);
             countList.Add(count);
+            priceList.Add(0);
+            idList.Add("");
 
             order.productName = nameList.ToArray();
             order.productModel = modelList.ToArray();
             order.productCount = countList.ToArray();
+            order.productUnitPrice = priceList.ToArray();
+            order.productId = idList.ToArray();
         }
 
         private async Task ProcessSet赠(string tag, bool process)

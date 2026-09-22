@@ -22,6 +22,103 @@ namespace CookieSheetServer.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("CookieSheet.Refunds.RefundRecord", b =>
+                {
+                    b.Property<string>("refundId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("completedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("deadlineAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("importedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("initiator")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("modelCode")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("orderId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("orderPaidAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("productCode")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("productId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("productModel")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("productName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<decimal>("productPaidAmount")
+                        .HasColumnType("numeric");
+
+                    b.Property<string>("reason")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<decimal>("refundAmount")
+                        .HasColumnType("numeric");
+
+                    b.Property<string>("refundType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("requestedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("saleStage")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<decimal>("shippingPaidAmount")
+                        .HasColumnType("numeric");
+
+                    b.Property<decimal>("shippingRefundAmount")
+                        .HasColumnType("numeric");
+
+                    b.Property<string>("shippingStatus")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("sourceFile")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("sourceRow")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("status")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("refundId");
+
+                    b.HasIndex("orderId");
+
+                    b.ToTable("refunds", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_refunds_successful_status", "\"status\" = '退款成功'");
+                        });
+                });
+
             modelBuilder.Entity("CookieSheetServer.Data.Entities.order", b =>
                 {
                     b.Property<string>("orderId")
@@ -37,6 +134,12 @@ namespace CookieSheetServer.Migrations
                         .IsRequired()
                         .HasColumnType("integer[]");
 
+                    b.PrimitiveCollection<string[]>("productId")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text[]")
+                        .HasDefaultValueSql("ARRAY[]::text[]");
+
                     b.PrimitiveCollection<string[]>("productModel")
                         .IsRequired()
                         .HasColumnType("text[]");
@@ -44,6 +147,12 @@ namespace CookieSheetServer.Migrations
                     b.PrimitiveCollection<string[]>("productName")
                         .IsRequired()
                         .HasColumnType("text[]");
+
+                    b.PrimitiveCollection<decimal[]>("productUnitPrice")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric[]")
+                        .HasDefaultValueSql("ARRAY[]::numeric[]");
 
                     b.Property<bool>("sended")
                         .HasColumnType("boolean");

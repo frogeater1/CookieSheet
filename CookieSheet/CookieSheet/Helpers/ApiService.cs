@@ -3,23 +3,28 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using CookieSheet.Data;
+using CookieSheet.Refunds;
+using System.Net;
 
 namespace CookieSheet.Helpers;
 
 public class ApiService
 {
+    private static readonly JsonSerializerOptions _jsonLogOptions = new();
     private static readonly HttpClient _httpClient = new HttpClient
     {
-        BaseAddress = new Uri("http://localhost:5011") // Default development URL, should be configurable
+        BaseAddress = new Uri(Environment.GetEnvironmentVariable("COOKIESHEET_API_URL") ?? "http://yangtze-v4.moenext.com:41011")
     };
 
     private static readonly SemaphoreSlim _cacheLock = new(1, 1);
     private static Task? _cacheWarmupTask;
     private static List<user> _cachedUsers = [];
     private static List<order> _cachedOrders = [];
+    private static List<RefundRecord> _cachedRefunds = [];
 
     public static Task WarmUpCacheAsync()
     {
@@ -35,10 +40,14 @@ public class ApiService
         {
             var usersTask = FetchUsersAsync();
             var ordersTask = FetchOrdersAsync();
+            var refundsTask = FetchRefundsAsync();
 
-            await Task.WhenAll(usersTask, ordersTask);
+            await Task.WhenAll(usersTask, ordersTask, refundsTask);
 
+            var refundsByOrder = refundsTask.Result.ToLookup(r => r.orderId);
+            foreach (var order in ordersTask.Result) order.ApplyRefunds(refundsByOrder[order.orderId]);
             (_cachedUsers, _cachedOrders) = BuildCacheGraph(usersTask.Result, ordersTask.Result);
+            _cachedRefunds = refundsTask.Result;
             _cacheWarmupTask = Task.CompletedTask;
             DebugConsole.Log($"ApiService.RefreshCacheAsync completed. Users={_cachedUsers.Count}, Orders={_cachedOrders.Count}");
         }
@@ -67,9 +76,40 @@ public class ApiService
         return await FetchUsersAsync();
     }
 
+    public static async Task<List<RefundRecord>> GetCachedRefundsAsync()
+    {
+        await WarmUpCacheAsync();
+        return _cachedRefunds;
+    }
+
+    public sealed record RefundSaveResult(int Added, int Updated, int Unchanged, int Skipped);
+
+    public static async Task<RefundSaveResult> SaveRefundsBatchAsync(List<RefundRecord> records)
+    {
+        using var response = await _httpClient.PostAsJsonAsync("/api/refunds/batch", records);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            throw new InvalidOperationException("服务器尚未支持退款导入，请先更新 CookieSheetServer 并执行数据库迁移。");
+        if (!response.IsSuccessStatusCode)
+        {
+            var message = await response.Content.ReadAsStringAsync();
+            throw new InvalidOperationException($"退款未保存（HTTP {(int)response.StatusCode}）：{message}");
+        }
+        return await response.Content.ReadFromJsonAsync<RefundSaveResult>()
+            ?? throw new InvalidOperationException("服务器未返回退款保存结果。");
+    }
+
+    private static async Task<List<RefundRecord>> FetchRefundsAsync()
+    {
+        using var response = await _httpClient.GetAsync("/api/refunds");
+        // Keep order queries usable while an older server is awaiting deployment.
+        if (response.StatusCode == HttpStatusCode.NotFound) return [];
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<List<RefundRecord>>() ?? [];
+    }
+
     public static async Task SaveUserAsync(user user)
     {
-        await _httpClient.PostAsJsonAsync("/api/users", user);
+        using var response = await PostAsJsonWithLoggingAsync("/api/users", user);
         await TryUpsertCachedUserAsync(user);
     }
 
@@ -80,27 +120,25 @@ public class ApiService
 
     public static async Task SaveOrderAsync(order order)
     {
-        await _httpClient.PostAsJsonAsync("/api/orders", order);
+        using var response = await PostAsJsonWithLoggingAsync("/api/orders", order);
         await TryUpsertCachedOrderAsync(order);
     }
 
     public static async Task<List<user>> SaveUsersBatchAsync(List<user> users)
     {
-        var response = await _httpClient.PostAsJsonAsync("/api/users/batch", users);
-        response.EnsureSuccessStatusCode();
-
+        using var response = await PostAsJsonWithLoggingAsync("/api/users/batch", users);
         var savedUsers = await response.Content.ReadFromJsonAsync<List<user>>() ?? [];
         return savedUsers;
     }
 
     public static async Task SaveOrdersBatchAsync(List<order> orders)
     {
-        await _httpClient.PostAsJsonAsync("/api/orders/batch", orders);
+        using var response = await PostAsJsonWithLoggingAsync("/api/orders/batch", orders);
     }
 
     public static async Task ClearDataAsync()
     {
-        await _httpClient.PostAsync("/api/clear", null);
+        using var response = await PostWithLoggingAsync("/api/clear");
         await ClearCacheAsync();
     }
 
@@ -108,12 +146,15 @@ public class ApiService
     {
         try
         {
+            LogHttpRequest(HttpMethod.Get, "/api/users");
             var users = await _httpClient.GetFromJsonAsync<List<user>>("/api/users");
+            LogHttpSuccess(HttpMethod.Get, "/api/users", null);
             return users ?? [];
         }
-        catch
+        catch (Exception ex)
         {
-            return [];
+            LogHttpFailure(HttpMethod.Get, "/api/users", ex);
+            throw;
         }
     }
 
@@ -121,12 +162,15 @@ public class ApiService
     {
         try
         {
+            LogHttpRequest(HttpMethod.Get, "/api/orders");
             var orders = await _httpClient.GetFromJsonAsync<List<order>>("/api/orders");
+            LogHttpSuccess(HttpMethod.Get, "/api/orders", null);
             return orders ?? [];
         }
-        catch
+        catch (Exception ex)
         {
-            return [];
+            LogHttpFailure(HttpMethod.Get, "/api/orders", ex);
+            throw;
         }
     }
 
@@ -137,6 +181,7 @@ public class ApiService
         {
             _cachedUsers = [];
             _cachedOrders = [];
+            _cachedRefunds = [];
             _cacheWarmupTask = Task.CompletedTask;
         }
         finally
@@ -206,6 +251,7 @@ public class ApiService
         var shouldRefresh = false;
 
         await WarmUpCacheAsync();
+        incomingOrder.ApplyRefunds(_cachedRefunds);
 
         await _cacheLock.WaitAsync();
         try
@@ -262,8 +308,61 @@ public class ApiService
         target.productName = source.productName;
         target.productModel = source.productModel;
         target.productCount = source.productCount;
+        target.productUnitPrice = source.productUnitPrice;
+        target.productId = source.productId;
+        target.ApplyRefunds(_cachedRefunds);
         target.price = source.price;
         target.sended = source.sended;
         target.tag = source.tag;
+    }
+
+    private static async Task<HttpResponseMessage> PostAsJsonWithLoggingAsync<T>(string path, T payload)
+    {
+        LogHttpRequest(HttpMethod.Post, path, payload);
+        var response = await _httpClient.PostAsJsonAsync(path, payload);
+        LogHttpSuccess(HttpMethod.Post, path, response);
+        response.EnsureSuccessStatusCode();
+        return response;
+    }
+
+    private static async Task<HttpResponseMessage> PostWithLoggingAsync(string path)
+    {
+        LogHttpRequest(HttpMethod.Post, path);
+        var response = await _httpClient.PostAsync(path, null);
+        LogHttpSuccess(HttpMethod.Post, path, response);
+        response.EnsureSuccessStatusCode();
+        return response;
+    }
+
+    private static void LogHttpRequest(HttpMethod method, string path, object? payload = null)
+    {
+        var fullUrl = new Uri(_httpClient.BaseAddress!, path);
+        var bodyText = payload == null ? string.Empty : $" | body={SafeSerialize(payload)}";
+        DebugConsole.Log($"HTTP {method} -> {fullUrl}{bodyText}");
+    }
+
+    private static void LogHttpSuccess(HttpMethod method, string path, HttpResponseMessage? response)
+    {
+        var fullUrl = new Uri(_httpClient.BaseAddress!, path);
+        var statusText = response == null ? "OK" : $"{(int)response.StatusCode} {response.StatusCode}";
+        DebugConsole.Log($"HTTP {method} <- {fullUrl} | status={statusText}");
+    }
+
+    private static void LogHttpFailure(HttpMethod method, string path, Exception ex)
+    {
+        var fullUrl = new Uri(_httpClient.BaseAddress!, path);
+        DebugConsole.Log($"HTTP {method} xx {fullUrl} | error={ex.Message}");
+    }
+
+    private static string SafeSerialize(object payload)
+    {
+        try
+        {
+            return JsonSerializer.Serialize(payload, _jsonLogOptions);
+        }
+        catch (Exception ex)
+        {
+            return $"<serialize failed: {ex.Message}>";
+        }
     }
 }

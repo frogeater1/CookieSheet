@@ -135,7 +135,9 @@ namespace CookieSheet
             LoadInitialData(false);
         }
 
-        private async void LoadInitialData(bool onlyUnsent = false)
+        private async void LoadInitialData(bool onlyUnsent = false) => await LoadInitialDataAsync(onlyUnsent);
+
+        private async Task LoadInitialDataAsync(bool onlyUnsent = false)
         {
             try
             {
@@ -188,6 +190,34 @@ namespace CookieSheet
             catch (Exception ex)
             {
                 DebugConsole.Log(ex);
+            }
+        }
+
+        private async void OnRefreshClick(object sender, RoutedEventArgs e)
+        {
+            if (!RefreshButton.IsEnabled) return;
+
+            RefreshButton.IsEnabled = false;
+            RefreshButton.Content = "刷新中…";
+            try
+            {
+                await ApiService.RefreshCacheAsync();
+                SearchBox.Text = "";
+                await LoadInitialDataAsync();
+            }
+            catch (Exception ex)
+            {
+                DebugConsole.Log(ex);
+                if (XamlRoot != null)
+                {
+                    await DialogHelper.ShowErrorDialogAsync(XamlRoot,
+                        "刷新失败，仍保留原有结果。请检查网络后重试。\n" + ex.Message);
+                }
+            }
+            finally
+            {
+                RefreshButton.Content = "刷新数据";
+                RefreshButton.IsEnabled = true;
             }
         }
 

@@ -1,0 +1,20 @@
+name: cookiesheet-refund-test
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: cookiesheet-refund-test-db
+    environment:
+      POSTGRES_DB: cookiesheet_refund_test
+      POSTGRES_USER: cookiesheet_test
+      POSTGRES_PASSWORD: ${COOKIESHEET_TEST_DB_PASSWORD:?Set the temporary database password}
+    ports:
+      - "127.0.0.1:55439:5432"
+    volumes:
+      - refund-test-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cookiesheet_test -d cookiesheet_refund_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+volumes:
+  refund-test-data:

@@ -8,6 +8,7 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
 COPY ["CookieSheetServer/CookieSheetServer.csproj", "CookieSheetServer/"]
+COPY ["CookieSheet.Refunds/CookieSheet.Refunds.csproj", "CookieSheet.Refunds/"]
 RUN dotnet restore "CookieSheetServer/CookieSheetServer.csproj"
 COPY . .
 WORKDIR "/src/CookieSheetServer"

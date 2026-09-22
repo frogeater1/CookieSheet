@@ -12,11 +12,12 @@
         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="25">
             <FontIcon Glyph="&#xE8F4;" FontSize="64" />
             <TextBlock Text="数据导入" FontSize="28" FontWeight="SemiBold" HorizontalAlignment="Center" />
-            <TextBlock Text="请选择要导入Excel文件,文件名表示批次。" HorizontalAlignment="Center" Foreground="Gray" />
+            <TextBlock Text="订单表文件名表示批次；退款表可以先于订单表导入。" HorizontalAlignment="Center" Foreground="Gray" />
 
-            <Button Content="选择Excel文件" Click="OnImportClick" HorizontalAlignment="Center" Width="200" Height="40" />
+            <Button x:Name="OrderImportButton" Content="导入订单表（.xlsx）" Click="OnImportClick" HorizontalAlignment="Center" Width="240" Height="40" />
+            <Button x:Name="RefundImportButton" Content="导入退款表（.xlsx）" Click="OnRefundImportClick" HorizontalAlignment="Center" Width="240" Height="40" />
 
-            <TextBlock x:Name="StatusTextBlock" HorizontalAlignment="Center" Foreground="Gray" Margin="0,10,0,0" />
+            <TextBlock x:Name="StatusTextBlock" HorizontalAlignment="Center" Foreground="Gray" Margin="16,10,16,0" MaxWidth="850" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
         </StackPanel>
     </Grid>
 </Page>

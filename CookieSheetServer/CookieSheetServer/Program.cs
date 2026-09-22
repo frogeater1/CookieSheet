@@ -1,6 +1,8 @@
 using CookieSheetServer.Data;
 using CookieSheetServer.Data.Entities;
 using Microsoft.EntityFrameworkCore;
+using CookieSheet.Refunds;
+using CookieSheetServer.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -106,8 +108,27 @@ app.MapPost("/api/orders/batch", async (List<order> orders, AppDbContext db) =>
     return Results.Ok();
 });
 
+app.MapGet("/api/refunds", async (AppDbContext db) => await db.refunds.AsNoTracking().ToListAsync());
+
+app.MapPost("/api/refunds/batch", async (List<RefundRecord> records, AppDbContext db) =>
+{
+    try
+    {
+        return Results.Ok(await RefundImportService.SaveAsync(db, records));
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { message = ex.Message });
+    }
+    catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
+    {
+        return Results.Conflict(new { message = "另一次导入同时更新了退款记录，请重新导入。" });
+    }
+});
+
 app.MapPost("/api/clear", async (AppDbContext db) =>
 {
+    db.refunds.RemoveRange(db.refunds);
     db.order.RemoveRange(db.order);
     db.user.RemoveRange(db.user);
     await db.SaveChangesAsync();
