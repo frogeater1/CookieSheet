@@ -35,7 +35,8 @@ public static class RefundRules
 
     public static bool IsSuccessful(RefundRecord record) => IsSuccessfulStatus(record.status);
 
-    public static bool IsPostageProduct(string? name) => name?.Trim() == "补邮";
+    public static bool IsPostageProduct(string? name, string? model) =>
+        name?.Trim() == "补邮" || model?.Trim() == "非偏远地区补邮";
 
     public static bool ShouldReplace(RefundRecord current, RefundRecord incoming)
     {

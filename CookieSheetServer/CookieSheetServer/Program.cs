@@ -8,6 +8,9 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddOpenApi();
+builder.Services.AddSingleton(new DataBackupService(
+    Environment.GetEnvironmentVariable("COOKIESHEET_BACKUP_DIR")
+    ?? Path.Combine(AppContext.BaseDirectory, "data-backups")));
 
 // Register AppDbContext with PostgreSQL
 builder.Services.AddDbContext<AppDbContext>(options =>
@@ -22,6 +25,25 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+// Backup operations never run on a schedule or as a side effect of restore.
+app.MapGet("/api/backups/latest", async (DataBackupService backups) =>
+    await BackupResult(async () => (await backups.GetLatestAsync()) is { } info ? Results.Ok(info) : Results.NoContent()));
+app.MapPost("/api/backups", async (AppDbContext db, DataBackupService backups) =>
+    await BackupResult(async () => Results.Ok(await backups.CreateAsync(db))));
+app.MapPost("/api/backups/restore", async (RestoreBackupRequest request, AppDbContext db, DataBackupService backups) =>
+    await BackupResult(async () => Results.Ok(await backups.RestoreAsync(db, request.BackupId))));
+
+async Task<IResult> BackupResult(Func<Task<IResult>> operation)
+{
+    try { return await operation(); }
+    catch (InvalidOperationException ex) { return Results.Conflict(new { message = ex.Message }); }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "Manual backup/restore failed");
+        return Results.Json(new { message = "操作未成功完成，请检查服务器日志和备份目录权限后重试。" }, statusCode: 500);
+    }
+}
 
 // API Endpoints for Users
 app.MapGet("/api/users", async (AppDbContext db) =>
@@ -109,6 +131,13 @@ app.MapPost("/api/orders/batch", async (List<order> orders, AppDbContext db) =>
 });
 
 app.MapGet("/api/refunds", async (AppDbContext db) => await db.refunds.AsNoTracking().ToListAsync());
+
+app.MapDelete("/api/refunds/{refundId}", async (string refundId, AppDbContext db) =>
+{
+    if (string.IsNullOrWhiteSpace(refundId)) return Results.BadRequest(new { message = "退款编号不能为空。" });
+    await RefundImportService.DeleteAsync(db, refundId);
+    return Results.NoContent();
+});
 
 app.MapPost("/api/refunds/batch", async (List<RefundRecord> records, AppDbContext db) =>
 {

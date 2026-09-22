@@ -1,0 +1,9 @@
+services:
+  cookiesheetserver:
+    environment:
+      COOKIESHEET_BACKUP_DIR: /app/data-backups
+    volumes:
+      - manual_backups:/app/data-backups
+
+volumes:
+  manual_backups:

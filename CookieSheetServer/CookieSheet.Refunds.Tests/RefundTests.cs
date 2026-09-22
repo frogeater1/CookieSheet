@@ -227,10 +227,10 @@ public class RefundTests
         Assert.Contains("第 2 行", Assert.Throws<FormatException>(() => RefundImportReader.Read(invalid, "bad.xlsx")).Message);
     }
 
-    [Fact] public void ReaderRejectsLegacyXlsExtension()
+    [Fact] public void ReaderRejectsUnsupportedExtension()
     {
         using var stream = new MemoryStream();
-        Assert.Contains("仅支持 .xlsx", Assert.Throws<FormatException>(() => RefundImportReader.Read(stream, "refund.xls")).Message);
+        Assert.Contains("仅支持 .xls 和 .xlsx", Assert.Throws<FormatException>(() => RefundImportReader.Read(stream, "refund.csv")).Message);
     }
 
     [Fact] public void ReaderSkipsOtherStatusesBeforeParsingUnneededFields()

@@ -35,6 +35,7 @@ if (-not $ready) {
     $env:DATABASE = "Host=127.0.0.1;Port=$($state.DatabasePort);Database=$($state.Database);Username=cookiesheet_test;Password=$($state.Password)"
     $env:ASPNETCORE_URLS = $state.ApiUrl
     $env:ASPNETCORE_ENVIRONMENT = 'Development'
+    $env:COOKIESHEET_BACKUP_DIR = Join-Path $stateDir 'backups'
     $p = Start-Process -FilePath (Get-Command dotnet).Source -ArgumentList @($serverDll) -WorkingDirectory (Split-Path $serverProject) -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $stateDir 'server.log') -RedirectStandardError (Join-Path $stateDir 'server-error.log')
     $state.ServerPid = $p.Id
     $state | ConvertTo-Json | Set-Content -LiteralPath $statePath -Encoding utf8

@@ -21,7 +21,7 @@ public static class RefundMatching
     {
         var result = new List<UnmatchedRefund>();
         foreach (var refund in RefundRules.LatestById(refunds.Where(r =>
-                     RefundRules.IsSuccessful(r) && !RefundRules.IsPostageProduct(r.productName))))
+                     RefundRules.IsSuccessful(r) && !RefundRules.IsPostageProduct(r.productName, r.productModel))))
         {
             if (!orders.TryGetValue(refund.orderId, out var products))
             {

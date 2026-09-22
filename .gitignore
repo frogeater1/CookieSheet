@@ -1,6 +1,7 @@
 ﻿/.idea
 /CookieSheet/.idea/
 /.local/
+**/data-backups/
 /CookieSheet/.vs/
 /CookieSheet/CookieSheet.slnx
 /CookieSheetServer/CookieSheetServer.sln

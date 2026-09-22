@@ -84,6 +84,79 @@ public class ApiService
 
     public sealed record RefundSaveResult(int Added, int Updated, int Unchanged, int Skipped);
 
+    public sealed record BackupInfo(Guid Id, DateTimeOffset CreatedAt, int Users, int Orders, int Refunds);
+
+    public static async Task<BackupInfo?> GetLatestBackupAsync()
+    {
+        using var response = await _httpClient.GetAsync("/api/backups/latest");
+        if (response.StatusCode == HttpStatusCode.NoContent) return null;
+        return await ReadBackupResponseAsync(response);
+    }
+
+    public static async Task<BackupInfo> CreateBackupAsync()
+    {
+        using var response = await _httpClient.PostAsync("/api/backups", null);
+        return await ReadBackupResponseAsync(response);
+    }
+
+    public static async Task<BackupInfo> RestoreBackupAsync(Guid backupId)
+    {
+        await _cacheLock.WaitAsync();
+        try
+        {
+            using var response = await _httpClient.PostAsJsonAsync("/api/backups/restore", new { backupId });
+            return await ReadBackupResponseAsync(response);
+        }
+        finally
+        {
+            // A lost response can still mean restore committed; never reuse stale data.
+            _cachedUsers = [];
+            _cachedOrders = [];
+            _cachedRefunds = [];
+            _cacheWarmupTask = null;
+            _cacheLock.Release();
+        }
+    }
+
+    private static async Task<BackupInfo> ReadBackupResponseAsync(HttpResponseMessage response)
+    {
+        if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed)
+            throw new InvalidOperationException("服务器尚未支持备份和恢复，请先更新 CookieSheetServer。");
+        if (!response.IsSuccessStatusCode)
+        {
+            var message = $"操作失败（HTTP {(int)response.StatusCode}）。";
+            try
+            {
+                using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                if (json.RootElement.TryGetProperty("message", out var value)) message = value.GetString() ?? message;
+            }
+            catch (JsonException) { }
+            throw new InvalidOperationException(message);
+        }
+        return await response.Content.ReadFromJsonAsync<BackupInfo>()
+            ?? throw new InvalidOperationException("服务器未返回备份信息。");
+    }
+
+    public static async Task DeleteRefundAsync(string refundId)
+    {
+        if (string.IsNullOrWhiteSpace(refundId)) throw new ArgumentException("退款编号不能为空。", nameof(refundId));
+        await _cacheLock.WaitAsync();
+        try
+        {
+            using var response = await _httpClient.DeleteAsync($"/api/refunds/{Uri.EscapeDataString(refundId)}");
+            if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed)
+                throw new InvalidOperationException("服务器尚未支持手动删除退款，请先更新 CookieSheetServer。");
+            response.EnsureSuccessStatusCode();
+
+            var affectedOrders = _cachedRefunds.Where(r => r.refundId == refundId).Select(r => r.orderId).ToHashSet();
+            _cachedRefunds.RemoveAll(r => r.refundId == refundId);
+            var remaining = _cachedRefunds.ToLookup(r => r.orderId);
+            foreach (var order in _cachedOrders.Where(o => affectedOrders.Contains(o.orderId)))
+                order.ApplyRefunds(remaining[order.orderId]);
+        }
+        finally { _cacheLock.Release(); }
+    }
+
     public static async Task<RefundSaveResult> SaveRefundsBatchAsync(List<RefundRecord> records)
     {
         using var response = await _httpClient.PostAsJsonAsync("/api/refunds/batch", records);

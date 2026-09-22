@@ -20,5 +20,8 @@ RUN dotnet publish "./CookieSheetServer.csproj" -c $BUILD_CONFIGURATION -o /app/
 
 FROM base AS final
 WORKDIR /app
+USER root
+RUN mkdir -p /app/data-backups && chown "$APP_UID:$APP_UID" /app/data-backups
+USER $APP_UID
 COPY --from=publish /app/publish .
 ENTRYPOINT ["dotnet", "CookieSheetServer.dll"]

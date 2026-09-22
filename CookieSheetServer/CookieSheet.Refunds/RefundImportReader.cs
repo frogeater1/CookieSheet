@@ -1,6 +1,4 @@
 using System.Globalization;
-using System.Text;
-using ExcelDataReader;
 
 namespace CookieSheet.Refunds;
 
@@ -10,11 +8,7 @@ public static class RefundImportReader
 {
     public static RefundImportResult Read(Stream stream, string sourceFile)
     {
-        if (!string.Equals(Path.GetExtension(sourceFile), ".xlsx", StringComparison.OrdinalIgnoreCase))
-            throw new FormatException("退款导入仅支持 .xlsx 文件，请另存为 Excel 工作簿后再导入。");
-        // ExcelDataReader initializes its default encoding even for the OpenXml-only reader.
-        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-        using var reader = ExcelReaderFactory.CreateOpenXmlReader(stream, new ExcelReaderConfiguration { LeaveOpen = true });
+        using var reader = ExcelImportReader.Open(stream, sourceFile);
         var records = new List<RefundRecord>();
         int sourceRows = 0, skippedRows = 0;
         var foundSheet = false;

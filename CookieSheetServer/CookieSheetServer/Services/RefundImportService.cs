@@ -8,6 +8,20 @@ public sealed record RefundSaveResult(int Added, int Updated, int Unchanged, int
 
 public static class RefundImportService
 {
+    public static async Task DeleteAsync(AppDbContext db, string refundId)
+    {
+        if (string.IsNullOrWhiteSpace(refundId)) throw new ArgumentException("退款编号不能为空。");
+        var record = await db.refunds.FindAsync(refundId);
+        if (record == null) return;
+        db.refunds.Remove(record);
+        try { await db.SaveChangesAsync(); }
+        catch (DbUpdateConcurrencyException)
+        {
+            // Another client may already have deleted this exact record.
+            if (await db.refunds.AsNoTracking().AnyAsync(r => r.refundId == refundId)) throw;
+        }
+    }
+
     public static async Task<RefundSaveResult> SaveAsync(AppDbContext db, List<RefundRecord> records)
     {
         var skipped = records.Count(r => !RefundRules.IsSuccessful(r));

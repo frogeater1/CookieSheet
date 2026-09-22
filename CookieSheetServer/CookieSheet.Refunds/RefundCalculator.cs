@@ -36,7 +36,8 @@ public static class RefundCalculator
         string.IsNullOrWhiteSpace(model) ? Normalize(name) : Normalize(model);
 
     public static bool Matches(OrderedProduct product, RefundRecord refund) =>
-        !RefundRules.IsPostageProduct(product.Name) && !RefundRules.IsPostageProduct(refund.productName)
+        !RefundRules.IsPostageProduct(product.Name, product.Model)
+        && !RefundRules.IsPostageProduct(refund.productName, refund.productModel)
         &&
         (Normalize(product.ProductId).Length > 0 && Normalize(refund.productId).Length > 0
             ? Normalize(product.ProductId) == Normalize(refund.productId)

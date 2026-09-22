@@ -15,12 +15,14 @@
     </Window.SystemBackdrop>
 
     <Grid>
-        <NavigationView x:Name="NavView" SelectionChanged="NavView_SelectionChanged" Loaded="NavView_Loaded" IsBackButtonVisible="Collapsed">
+        <NavigationView x:Name="NavView" SelectionChanged="NavView_SelectionChanged" Loaded="NavView_Loaded" IsBackButtonVisible="Collapsed" IsSettingsVisible="False">
             <NavigationView.MenuItems>
                 <NavigationViewItem Icon="Upload" Content="数据导入" Tag="Import" />
                 <NavigationViewItem Icon="List" Content="订单查询" Tag="Orders" />
                 <NavigationViewItem Icon="Find" Content="用户查询" Tag="Query" />
+                <NavigationViewItem Icon="Shop" Content="已售出商品" Tag="SoldProducts" />
                 <NavigationViewItem Icon="Document" Content="待匹配退款" Tag="UnmatchedRefunds" />
+                <NavigationViewItem Icon="Save" Content="备份与恢复" Tag="Backup" />
             </NavigationView.MenuItems>
             <Frame x:Name="ContentFrame"/>
         </NavigationView>

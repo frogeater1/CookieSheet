@@ -14,8 +14,8 @@
             <TextBlock Text="数据导入" FontSize="28" FontWeight="SemiBold" HorizontalAlignment="Center" />
             <TextBlock Text="订单表文件名表示批次；退款表可以先于订单表导入。" HorizontalAlignment="Center" Foreground="Gray" />
 
-            <Button x:Name="OrderImportButton" Content="导入订单表（.xlsx）" Click="OnImportClick" HorizontalAlignment="Center" Width="240" Height="40" />
-            <Button x:Name="RefundImportButton" Content="导入退款表（.xlsx）" Click="OnRefundImportClick" HorizontalAlignment="Center" Width="240" Height="40" />
+            <Button x:Name="OrderImportButton" Content="导入订单表（.xls / .xlsx）" Click="OnImportClick" HorizontalAlignment="Center" Width="240" Height="40" />
+            <Button x:Name="RefundImportButton" Content="导入退款表（.xls / .xlsx）" Click="OnRefundImportClick" HorizontalAlignment="Center" Width="240" Height="40" />
 
             <TextBlock x:Name="StatusTextBlock" HorizontalAlignment="Center" Foreground="Gray" Margin="16,10,16,0" MaxWidth="850" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
         </StackPanel>

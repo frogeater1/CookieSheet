@@ -43,13 +43,8 @@ namespace CookieSheet
 
         private void NavView_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
         {
-            if (args.IsSettingsSelected)
+            if (args.SelectedItemContainer?.Tag is string tag)
             {
-                // ContentFrame.Navigate(typeof(SettingsPage));
-            }
-            else
-            {
-                var tag = args.SelectedItemContainer.Tag.ToString();
                 switch (tag)
                 {
                     case "Import":
@@ -61,8 +56,14 @@ namespace CookieSheet
                     case "Orders":
                         ContentFrame.Navigate(typeof(OrderListPage));
                         break;
+                    case "SoldProducts":
+                        ContentFrame.Navigate(typeof(SoldProductsPage));
+                        break;
                     case "UnmatchedRefunds":
                         ContentFrame.Navigate(typeof(UnmatchedRefundsPage));
+                        break;
+                    case "Backup":
+                        ContentFrame.Navigate(typeof(BackupPage));
                         break;
                 }
             }

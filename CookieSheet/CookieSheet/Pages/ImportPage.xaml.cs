@@ -4,37 +4,14 @@ using System;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using MiniExcelLibs;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using CookieSheet.Data;
 using CookieSheet.Helpers;
-using MiniExcelLibs.Attributes;
 using CookieSheet.Refunds;
 
 namespace CookieSheet
 {
-    public class ImportRecord
-    {
-        [ExcelColumnName("下单模板信息")] public string 下单模板信息 { get; set; } = "";
-        [ExcelColumnName("收货人/提货人手机号")] public string 手机号 { get; set; } = "";
-        [ExcelColumnName("收货人/提货人姓名")] public string 收货人 { get; set; } = "";
-        [ExcelColumnName("下单账号")] public string 下单账号 { get; set; } = "";
-        [ExcelColumnName("收货/提货详细地址")] public string 详细地址 { get; set; } = "";
-        [ExcelColumnName("商品名称")] public string 商品名称 { get; set; } = "";
-        [ExcelColumnName("商品型号")] public string 商品型号 { get; set; } = "";
-        [ExcelColumnName("商品件数")] public string 商品件数 { get; set; } = "";
-        [ExcelColumnName("商品ID")] public string 商品ID { get; set; } = "";
-        [ExcelColumnName("商品单价")] public string 商品单价 { get; set; } = "";
-        [ExcelColumnName("运费")] public string 运费 { get; set; } = "";
-        [ExcelColumnName("实付金额")] public string 实付金额 { get; set; } = "";
-        [ExcelColumnName("订单编号")] public string 订单编号 { get; set; } = "";
-        [ExcelColumnName("下单时间")] public string 下单时间 { get; set; } = "";
-        [ExcelColumnName("发货时间")] public string 发货时间 { get; set; } = "";
-        [ExcelColumnName("退款状态")] public string 退款状态 { get; set; } = "";
-        [ExcelColumnName("订单状态")] public string 订单状态 { get; set; } = "";
-    }
-
     public sealed partial class ImportPage : Page
     {
         public ImportPage()
@@ -55,6 +32,7 @@ namespace CookieSheet
 
                 picker.ViewMode = Windows.Storage.Pickers.PickerViewMode.List;
                 picker.SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.DocumentsLibrary;
+                picker.FileTypeFilter.Add(".xls");
                 picker.FileTypeFilter.Add(".xlsx");
 
                 var file = await picker.PickSingleFileAsync();
@@ -74,14 +52,15 @@ namespace CookieSheet
                     var usersToUpdate = new List<user>();
                     var ordersToUpdate = new List<order>();
 
-                    foreach (var r in stream.Query<ImportRecord>())
+                    foreach (var r in OrderImportReader.Read(stream, file.Name))
                     {
                         if (IsEmptyRecord(r))
                         {
                             continue;
                         }
 
-                        if (r.商品名称 == "补邮" && (r.退款状态 == "退款完成" || r.订单状态 == "已关闭"))
+                        var isPostage = RefundRules.IsPostageProduct(r.商品名称, r.商品型号);
+                        if (isPostage && (r.退款状态 == "退款完成" || r.订单状态 == "已关闭"))
                         {
                             // Refunded regular orders must remain available for later refund reconciliation.
                             continue;
@@ -105,7 +84,7 @@ namespace CookieSheet
 
                         if (user == null)
                         {
-                            if (r.商品名称 == "补邮")
+                            if (isPostage)
                             {
                                 tempError.Add($"补邮订单{r.订单编号} 账号{r.下单账号} 填写的QQ{qq}不存在");
                                 continue;
@@ -126,7 +105,7 @@ namespace CookieSheet
                             userAdded++;
                         }
 
-                        if (r.商品名称 == "补邮")
+                        if (isPostage)
                         {
                             var sendedTime = ParseUtc8DateTime(r.发货时间);
                             foreach (var o in user.orders.Where(x => x.orderedAt < sendedTime))
@@ -228,6 +207,7 @@ namespace CookieSheet
             {
                 var picker = new Windows.Storage.Pickers.FileOpenPicker();
                 WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(App.CurrentWindow));
+                picker.FileTypeFilter.Add(".xls");
                 picker.FileTypeFilter.Add(".xlsx");
                 var file = await picker.PickSingleFileAsync();
                 if (file == null) { StatusTextBlock.Text = "操作已取消。"; return; }
@@ -244,7 +224,7 @@ namespace CookieSheet
                 saved = true;
                 await ApiService.RefreshCacheAsync();
                 var orders = (await ApiService.GetCachedOrdersAsync()).ToDictionary(o => o.orderId);
-                var matchable = result.Records.Where(r => !RefundRules.IsPostageProduct(r.productName)).ToList();
+                var matchable = result.Records.Where(r => !RefundRules.IsPostageProduct(r.productName, r.productModel)).ToList();
                 var postage = result.Records.Count - matchable.Count;
                 var unmatched = matchable.Count(r => !orders.ContainsKey(r.orderId));
                 var unmatchedProduct = matchable.Count(r => orders.TryGetValue(r.orderId, out var order)

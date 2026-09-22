@@ -62,7 +62,7 @@
                           HorizontalScrollMode="Enabled" HorizontalScrollBarVisibility="Auto"
                           VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Disabled"
                           VerticalContentAlignment="Stretch">
-                <Grid MinWidth="1120" Width="{x:Bind RefundsViewport.ViewportWidth, Mode=OneWay}">
+                <Grid MinWidth="1200" Width="{x:Bind RefundsViewport.ViewportWidth, Mode=OneWay}">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
@@ -76,6 +76,7 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="90" />
                             <ColumnDefinition Width="180" />
+                            <ColumnDefinition Width="80" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="退款时间" Style="{StaticResource RefundCellStyle}" />
                         <TextBlock Grid.Column="1" Text="订单编号" Style="{StaticResource RefundCellStyle}" />
@@ -84,6 +85,7 @@
                         <TextBlock Grid.Column="4" Text="商品型号" Style="{StaticResource RefundCellStyle}" />
                         <TextBlock Grid.Column="5" Text="退款金额" Style="{StaticResource RefundCellStyle}" HorizontalAlignment="Right" />
                         <TextBlock Grid.Column="6" Text="未匹配原因" Style="{StaticResource RefundCellStyle}" />
+                        <TextBlock Grid.Column="7" Text="操作" Style="{StaticResource RefundCellStyle}" />
                     </Grid>
                     <ListView x:Name="RefundsList" Grid.Row="1" SelectionMode="None" Padding="0"
                               HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollMode="Disabled"
@@ -107,6 +109,7 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="90" />
                                         <ColumnDefinition Width="180" />
+                                        <ColumnDefinition Width="80" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Text="{x:Bind TimeText}" Style="{StaticResource RefundCellStyle}"
                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" ToolTipService.ToolTip="{x:Bind FullTimeText}" />
@@ -116,6 +119,9 @@
                                     <TextBlock Grid.Column="4" Text="{x:Bind ProductModel}" Style="{StaticResource RefundCellStyle}" ToolTipService.ToolTip="{x:Bind ProductModel}" />
                                     <TextBlock Grid.Column="5" Text="{x:Bind AmountText}" Style="{StaticResource RefundCellStyle}" HorizontalAlignment="Right" />
                                     <TextBlock Grid.Column="6" Text="{x:Bind Reason}" Style="{StaticResource RefundCellStyle}" ToolTipService.ToolTip="{x:Bind Reason}" />
+                                    <Button Grid.Column="7" Content="删除" Tag="{x:Bind}" Click="OnDeleteClick"
+                                            MinWidth="60" MinHeight="28" Padding="10,2" Margin="0,2,12,2"
+                                            VerticalAlignment="Center" AutomationProperties.Name="删除退款记录" />
                                 </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>

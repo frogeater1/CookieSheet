@@ -17,6 +17,7 @@ public sealed partial class UnmatchedRefundsPage : Page
     private List<UnmatchedRefundViewModel> _allRefunds = [];
     private bool _isLoading;
     private bool _hasLoaded;
+    private bool _isDeleting;
 
     public UnmatchedRefundsPage() => InitializeComponent();
 
@@ -28,24 +29,19 @@ public sealed partial class UnmatchedRefundsPage : Page
 
     private async Task LoadRefundsAsync(bool refresh = false)
     {
-        if (_isLoading) return;
+        if (_isLoading || _isDeleting) return;
         _isLoading = true;
-        FilterPanel.IsEnabled = RefreshButton.IsEnabled = false;
+        FilterPanel.IsEnabled = RefreshButton.IsEnabled = RefundsList.IsEnabled = false;
         LoadingIndicator.Visibility = Visibility.Visible;
         LoadingIndicator.IsActive = true;
         EmptyStateText.Visibility = Visibility.Collapsed;
         StatusMessage.IsOpen = false;
+        StatusMessage.Severity = InfoBarSeverity.Error;
         ResultsSummary.Text = "正在加载退款…";
         try
         {
             if (refresh) await ApiService.RefreshCacheAsync();
-            var orders = await ApiService.GetCachedOrdersAsync();
-            var refunds = await ApiService.GetCachedRefundsAsync();
-            var productsByOrder = orders.ToDictionary(o => o.orderId,
-                o => (IReadOnlyList<OrderedProduct>)o.GetOrderedProducts());
-            _allRefunds = RefundMatching.FindUnmatched(refunds, productsByOrder)
-                .Select(r => new UnmatchedRefundViewModel(r))
-                .OrderByDescending(r => r.RefundedAt).ThenBy(r => r.RefundId, StringComparer.Ordinal).ToList();
+            await ReadCachedRefundsAsync();
             _hasLoaded = true;
             ApplySearch();
         }
@@ -62,9 +58,71 @@ public sealed partial class UnmatchedRefundsPage : Page
         finally
         {
             _isLoading = false;
-            FilterPanel.IsEnabled = RefreshButton.IsEnabled = true;
+            FilterPanel.IsEnabled = RefreshButton.IsEnabled = RefundsList.IsEnabled = true;
             LoadingIndicator.IsActive = false;
             LoadingIndicator.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private async Task ReadCachedRefundsAsync()
+    {
+        var orders = await ApiService.GetCachedOrdersAsync();
+        var refunds = await ApiService.GetCachedRefundsAsync();
+        var productsByOrder = orders.ToDictionary(o => o.orderId,
+            o => (IReadOnlyList<OrderedProduct>)o.GetOrderedProducts());
+        _allRefunds = RefundMatching.FindUnmatched(refunds, productsByOrder)
+            .Select(r => new UnmatchedRefundViewModel(r))
+            .OrderByDescending(r => r.RefundedAt).ThenBy(r => r.RefundId, StringComparer.Ordinal).ToList();
+    }
+
+    private async void OnDeleteClick(object sender, RoutedEventArgs e)
+    {
+        if (_isLoading || _isDeleting || sender is not Button { Tag: UnmatchedRefundViewModel item }) return;
+        _isDeleting = true;
+        FilterPanel.IsEnabled = RefreshButton.IsEnabled = RefundsList.IsEnabled = false;
+        var deleted = false;
+        try
+        {
+            var dialog = new ContentDialog
+            {
+                Title = "删除退款记录",
+                Content = new TextBlock
+                {
+                    Text = $"退款编号：{item.RefundId}\n订单编号：{item.OrderId}\n商品：{item.ProductName} / {item.ProductModel}\n退款金额：{item.AmountText}\n\n确定删除这条退款记录吗？原订单不会删除。此操作无法撤销；再次导入包含该记录的退款表会重新添加。",
+                    TextWrapping = TextWrapping.Wrap,
+                    IsTextSelectionEnabled = true
+                },
+                PrimaryButtonText = "删除",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = XamlRoot
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+            StatusMessage.IsOpen = false;
+            await ApiService.DeleteRefundAsync(item.RefundId);
+            deleted = true;
+            _allRefunds.RemoveAll(r => r.RefundId == item.RefundId);
+            ApplySearch();
+            await ReadCachedRefundsAsync();
+            ApplySearch();
+            StatusMessage.Severity = InfoBarSeverity.Success;
+            StatusMessage.Message = $"退款记录 {item.RefundId} 已删除。";
+            StatusMessage.IsOpen = true;
+        }
+        catch (Exception ex)
+        {
+            DebugConsole.Log(ex);
+            StatusMessage.Severity = InfoBarSeverity.Error;
+            StatusMessage.Message = deleted
+                ? "退款记录已删除，但列表更新失败。请点击“刷新数据”重试。"
+                : $"未能确认删除结果：{ex.Message} 请刷新数据核实后再重试。";
+            StatusMessage.IsOpen = true;
+        }
+        finally
+        {
+            _isDeleting = false;
+            FilterPanel.IsEnabled = RefreshButton.IsEnabled = RefundsList.IsEnabled = true;
         }
     }
 
