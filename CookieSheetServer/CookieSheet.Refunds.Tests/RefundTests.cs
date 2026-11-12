@@ -11,7 +11,7 @@ namespace CookieSheet.Refunds.Tests;
 
 public class RefundTests
 {
-    private static OrderedProduct Product(int quantity = 5, decimal unitPrice = 7) => new("企划", "明信片", quantity, unitPrice);
+    private static OrderedProduct Product(int quantity = 5) => new("企划", "明信片", quantity);
     private static RefundRecord Refund(string id = "r1", decimal amount = 21, string status = "退款成功") => new()
     {
         refundId = id, orderId = "o1", productName = "企划", productModel = "明信片", refundAmount = amount,
@@ -56,17 +56,17 @@ public class RefundTests
 
     [Fact] public void LegacyOrdersUseLinePaidAmountAndOriginalQuantity()
     {
-        var result = RefundCalculator.Calculate("o1", [Product(unitPrice: 0), new("企划", "色纸", 2, 30)], [Refund()]);
+        var result = RefundCalculator.Calculate("o1", [Product(), new("企划", "色纸", 2)], [Refund()]);
         Assert.Equal(3, result[0].RefundedQuantity);
         Assert.Equal(ProductRefundStatus.None, result[1].Status);
     }
 
     [Theory]
-    [InlineData(20)]
-    [InlineData(36)]
-    public void FractionalOrExcessRefundsRequireReview(decimal amount)
+    [InlineData(20, ProductRefundStatus.NeedsReview)]
+    [InlineData(36, ProductRefundStatus.InvalidDetails)]
+    public void FractionalRefundNeedsReviewButExcessRefundIsInvalid(decimal amount, ProductRefundStatus status)
     {
-        Assert.Equal(ProductRefundStatus.NeedsReview,
+        Assert.Equal(status,
             Assert.Single(RefundCalculator.Calculate("o1", [Product()], [Refund(amount: amount)])).Status);
     }
 
@@ -80,9 +80,9 @@ public class RefundTests
     [InlineData("补邮", "补邮")]
     [InlineData("补邮", "企划")]
     [InlineData("企划", " 补邮 ")]
-    public void PostageNeverMatchesEvenWhenProductIdAndModelMatch(string orderName, string refundName)
+    public void PostageNeverMatchesEvenWhenModelMatches(string orderName, string refundName)
     {
-        var product = new OrderedProduct(orderName, "明信片", 5, 7, "same-product-id");
+        var product = new OrderedProduct(orderName, "明信片", 5);
         var refund = Refund();
         refund.productName = refundName;
         refund.productId = "same-product-id";
@@ -101,20 +101,20 @@ public class RefundTests
         Assert.Single(await db.refunds.ToListAsync());
     }
 
-    [Fact] public void MissingAndConflictingPricesRequireReview()
+    [Fact] public void MissingOrConflictingRefundProductPaidAmountsRequireReview()
     {
         var r = Refund(); r.productPaidAmount = 0;
-        Assert.Equal(ProductRefundStatus.NeedsReview, Assert.Single(RefundCalculator.Calculate("o1", [Product(unitPrice: 0)], [r])).Status);
-        r.productPaidAmount = 70;
         Assert.Equal(ProductRefundStatus.NeedsReview, Assert.Single(RefundCalculator.Calculate("o1", [Product()], [r])).Status);
+        r.productPaidAmount = 70;
+        Assert.Equal(ProductRefundStatus.InvalidDetails, Assert.Single(RefundCalculator.Calculate("o1", [Product()], [r, Refund("other")])).Status);
     }
 
     [Fact] public void MatchingDoesNotLeakAcrossOrdersModelsOrProducts()
     {
         var r = Refund();
         Assert.Equal(ProductRefundStatus.None, Assert.Single(RefundCalculator.Calculate("another", [Product()], [r])).Status);
-        Assert.Equal(ProductRefundStatus.None, Assert.Single(RefundCalculator.Calculate("o1", [new("别的企划", "明信片", 5, 7)], [r])).Status);
-        Assert.Equal(ProductRefundStatus.None, Assert.Single(RefundCalculator.Calculate("o1", [new("企划", "色纸", 5, 7)], [r])).Status);
+        Assert.Equal(ProductRefundStatus.None, Assert.Single(RefundCalculator.Calculate("o1", [new("别的企划", "明信片", 5)], [r])).Status);
+        Assert.Equal(ProductRefundStatus.None, Assert.Single(RefundCalculator.Calculate("o1", [new("企划", "色纸", 5)], [r])).Status);
     }
 
     [Fact] public void DuplicateOrderLinesAreNotBothCountedAsRefunded()
@@ -126,22 +126,37 @@ public class RefundTests
     [Fact] public void EmptyModelMatchesNameFallback()
     {
         var r = Refund(); r.productName = "无型号商品"; r.productModel = "";
-        Assert.Equal(3, Assert.Single(RefundCalculator.Calculate("o1", [new("无型号商品", "无型号商品", 5, 7)], [r])).RefundedQuantity);
+        Assert.Equal(3, Assert.Single(RefundCalculator.Calculate("o1", [new("无型号商品", "无型号商品", 5)], [r])).RefundedQuantity);
     }
 
     [Fact] public void OneCentGoodsAndRepeatingDecimalUnitPricesRemainExact()
     {
         var r = Refund(amount: 0.01m); r.productPaidAmount = 0.01m;
-        Assert.Equal(ProductRefundStatus.Full, Assert.Single(RefundCalculator.Calculate("o1", [Product(1, 0)], [r])).Status);
+        Assert.Equal(ProductRefundStatus.Full, Assert.Single(RefundCalculator.Calculate("o1", [Product(1)], [r])).Status);
         r.refundAmount = 10; r.productPaidAmount = 10;
-        Assert.Equal(3, Assert.Single(RefundCalculator.Calculate("o1", [Product(3, 0)], [r])).RefundedQuantity);
+        Assert.Equal(3, Assert.Single(RefundCalculator.Calculate("o1", [Product(3)], [r])).RefundedQuantity);
     }
 
-    [Fact] public void OrderPriceImportSeparatesShippingAndNeverAllocatesMultiProductTotal()
+    [Theory]
+    [InlineData(3, 21, 14, 2)]
+    [InlineData(2, 14, 7, 1)]
+    [InlineData(3, 24, 16, 2)]
+    [InlineData(2, 76, 38, 1)]
+    public void RefundLineAmountsDetermineQuantity(int bought, decimal paid, decimal refunded, int expected)
     {
-        Assert.Equal([7m], OrderImportPricing.Read(null, "8", 43, [5]));
-        Assert.Equal([0m, 0m], OrderImportPricing.Read(null, "8", 43, [5, 2]));
-        Assert.Equal([7m, 30m], OrderImportPricing.Read("7;30", "8", 103, [5, 2]));
+        var refund = Refund(amount: refunded);
+        refund.productPaidAmount = paid;
+        var result = Assert.Single(RefundCalculator.Calculate("o1", [Product(bought)], [refund]));
+        Assert.Equal(expected, result.RefundedQuantity);
+        Assert.Equal(ProductRefundStatus.Partial, result.Status);
+        Assert.Equal(bought, result.Product.Quantity);
+    }
+
+    [Fact] public void UnsuccessfulAttemptCannotContaminateOriginalProductPaidAmount()
+    {
+        var pending = Refund("pending", status: "商家发起退款，待买家处理");
+        pending.productPaidAmount = 999;
+        Assert.Equal(3, Assert.Single(RefundCalculator.Calculate("o1", [Product()], [Refund(), pending])).RefundedQuantity);
     }
 
     private static DbContextOptions<AppDbContext> Options() =>
@@ -196,6 +211,93 @@ public class RefundTests
         var invalid = Refund(); invalid.orderId = "other";
         await Assert.ThrowsAsync<ArgumentException>(() => RefundImportService.SaveAsync(db, [Refund("new"), invalid]));
         Assert.Single(await db.refunds.ToListAsync());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LaterImportOverwritesSuccessfulRefundEvenWithOlderOrMissingCompletionTime(bool missingCompletion)
+    {
+        var options = Options();
+        using (var db = new AppDbContext(options))
+            await RefundImportService.SaveAsync(db, [Refund(amount: 7)]);
+
+        var incoming = Refund(amount: 14);
+        incoming.requestedAt = incoming.requestedAt!.Value.AddDays(-2);
+        incoming.completedAt = missingCompletion ? null : incoming.completedAt!.Value.AddDays(-2);
+        incoming.sourceFile = "修正退款.xlsx";
+        incoming.sourceRow = 6;
+        incoming.reason = "修正金额";
+        using (var db = new AppDbContext(options))
+        {
+            var result = await RefundImportService.SaveAsync(db, [incoming]);
+            Assert.Equal(new RefundSaveResult(0, 1, 0, 0), result);
+        }
+        using (var db = new AppDbContext(options))
+        {
+            var saved = Assert.Single(await db.refunds.AsNoTracking().ToListAsync());
+            Assert.Equal(14, saved.refundAmount);
+            Assert.Equal(incoming.requestedAt, saved.requestedAt);
+            Assert.Equal(incoming.completedAt, saved.completedAt);
+            Assert.Equal("修正退款.xlsx", saved.sourceFile);
+            Assert.Equal(6, saved.sourceRow);
+            Assert.Equal("修正金额", saved.reason);
+            Assert.Equal(2, Assert.Single(RefundCalculator.Calculate("o1", [Product()], [saved])).RefundedQuantity);
+            await RefundImportService.SaveAsync(db, [Refund(amount: 14)]);
+            Assert.Single(await db.refunds.ToListAsync());
+        }
+    }
+
+    [Theory]
+    [InlineData("商家发起退款，待买家处理")]
+    [InlineData("买家取消退款，交易恢复正常")]
+    public async Task LaterNonSuccessfulImportLeavesSavedSuccessUntouched(string status)
+    {
+        var options = Options();
+        using (var db = new AppDbContext(options))
+            await RefundImportService.SaveAsync(db, [Refund()]);
+        using (var db = new AppDbContext(options))
+        {
+            var incoming = Refund(amount: 0, status: status);
+            incoming.requestedAt = incoming.requestedAt!.Value.AddDays(10);
+            Assert.Equal(new RefundSaveResult(0, 0, 0, 1), await RefundImportService.SaveAsync(db, [incoming]));
+        }
+        using (var db = new AppDbContext(options))
+        {
+            var saved = await db.refunds.SingleAsync();
+            Assert.Equal("退款成功", saved.status);
+            Assert.Equal(21, saved.refundAmount);
+        }
+    }
+
+    [Fact] public async Task SequentialRefundImportPreservesOmittedRecordsAndDoesNotOverwriteOrders()
+    {
+        var options = Options();
+        using (var db = new AppDbContext(options))
+        {
+            db.giftChoices.Add(new() { Batch = "原批次", FullGift = true, SetGift = true });
+            db.order.Add(new CookieSheetServer.Data.Entities.order
+            {
+                orderId = "o1", userId = 1, tel = "", tag = "原批次", price = 35,
+                productName = ["企划"], productModel = ["明信片"], productCount = [5]
+            });
+            await RefundImportService.SaveAsync(db, [Refund("r1", 7), Refund("r2", 7)]);
+        }
+        using (var db = new AppDbContext(options))
+            Assert.Equal(new RefundSaveResult(1, 1, 0, 0, Gifts: new(1, 1, 0)),
+                await RefundImportService.SaveAsync(db, [Refund("r1", 14), Refund("r3", 7)]));
+        using (var db = new AppDbContext(options))
+        {
+            var records = await db.refunds.ToListAsync();
+            Assert.Equal(3, records.Count);
+            Assert.Equal(7, records.Single(r => r.refundId == "r2").refundAmount);
+            Assert.Equal(4, Assert.Single(RefundCalculator.Calculate("o1", [Product()], records)).RefundedQuantity);
+            var order = await db.order.SingleAsync();
+            Assert.Equal(35, order.price);
+            Assert.Equal([5, 1], order.productCount);
+            Assert.Equal(["企划", "Set赠"], order.productName);
+            Assert.Equal("原批次", order.tag);
+        }
     }
 
     [Fact] public void RefundHasNoOrderForeignKey()
@@ -273,7 +375,7 @@ public class RefundTests
         Assert.Contains(result.Records, r => r.refundId == "144115526827130368" && r.refundAmount == 7);
     }
 
-    private static MemoryStream Spreadsheet(string[][] rows)
+    internal static MemoryStream Spreadsheet(string[][] rows)
     {
         var stream = new MemoryStream();
         using (var zip = new ZipArchive(stream, ZipArchiveMode.Create, true))

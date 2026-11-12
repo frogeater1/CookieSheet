@@ -129,6 +129,17 @@ public sealed partial class OrderListPage : Page
 
     private async void OnRefreshClick(object sender, RoutedEventArgs e) => await LoadOrdersAsync(true);
 
+    private async void OnDeleteOrderClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string orderId }) return;
+        OrdersList.IsEnabled = false;
+        try
+        {
+            if (await OrderDeletionDialog.ShowAsync(XamlRoot, orderId)) await LoadOrdersAsync();
+        }
+        finally { OrdersList.IsEnabled = true; }
+    }
+
     private void OnSearchClick(object sender, RoutedEventArgs e) => ApplyFilters();
 
     private void OnSearchKeyDown(object sender, KeyRoutedEventArgs e)

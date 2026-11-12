@@ -38,6 +38,8 @@ public static class OrderListQuery
             OrderRefundFilter.Full => query.Where(item => item.ProductRefunds.Any(p => p.Status == ProductRefundStatus.Full)),
             OrderRefundFilter.Partial => query.Where(item => item.ProductRefunds.Any(p => p.Status == ProductRefundStatus.Partial)),
             OrderRefundFilter.NeedsReview => query.Where(item => item.ProductRefunds.Any(p => p.Status == ProductRefundStatus.NeedsReview)),
+            OrderRefundFilter.AwaitingDetails => query.Where(item => item.ProductRefunds.Any(p => p.Status == ProductRefundStatus.AwaitingDetails)),
+            OrderRefundFilter.InvalidDetails => query.Where(item => item.ProductRefunds.Any(p => p.Status == ProductRefundStatus.InvalidDetails)),
             OrderRefundFilter.None => query.Where(item => item.ProductRefunds.All(p => p.Status == ProductRefundStatus.None)),
             _ => query
         };
@@ -50,4 +52,4 @@ public static class OrderListQuery
     }
 }
 
-public enum OrderRefundFilter { All, AnyRefund, Full, Partial, NeedsReview, None }
+public enum OrderRefundFilter { All, AnyRefund, Full, Partial, NeedsReview, None, AwaitingDetails, InvalidDetails }

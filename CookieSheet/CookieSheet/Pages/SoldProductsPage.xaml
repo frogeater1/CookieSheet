@@ -82,7 +82,7 @@
             <ScrollViewer x:Name="ProductsViewport" Grid.Row="1" HorizontalScrollMode="Enabled"
                           HorizontalScrollBarVisibility="Auto" VerticalScrollMode="Disabled"
                           VerticalScrollBarVisibility="Disabled" VerticalContentAlignment="Stretch">
-                <Grid MinWidth="760" Width="{x:Bind ProductsViewport.ViewportWidth, Mode=OneWay}" RowSpacing="8">
+                <Grid MinWidth="800" Width="{x:Bind ProductsViewport.ViewportWidth, Mode=OneWay}" RowSpacing="8">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
@@ -92,7 +92,7 @@
                             <ColumnDefinition Width="100" />
                             <ColumnDefinition Width="3*" MinWidth="300" />
                             <ColumnDefinition Width="2*" MinWidth="240" />
-                            <ColumnDefinition Width="120" />
+                            <ColumnDefinition Width="160" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="批次" Style="{StaticResource SalesCell}" />
                         <TextBlock Grid.Column="1" Text="商品名称" Style="{StaticResource SalesCell}" />
@@ -136,12 +136,12 @@
                                         <ColumnDefinition Width="100" />
                                         <ColumnDefinition Width="3*" MinWidth="300" />
                                         <ColumnDefinition Width="2*" MinWidth="240" />
-                                        <ColumnDefinition Width="120" />
+                                        <ColumnDefinition Width="160" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Text="{x:Bind TagText}" Style="{StaticResource SalesCell}" ToolTipService.ToolTip="{x:Bind TagText}" />
                                     <TextBlock Grid.Column="1" Text="{x:Bind Name}" Style="{StaticResource SalesCell}" FontWeight="SemiBold" ToolTipService.ToolTip="{x:Bind Name}" />
                                     <TextBlock Grid.Column="2" Text="{x:Bind Model}" Style="{StaticResource SalesCell}" ToolTipService.ToolTip="{x:Bind Model}" />
-                                    <TextBlock Grid.Column="3" Text="{x:Bind NetText}" Style="{StaticResource SalesCell}" HorizontalAlignment="Right" FontWeight="SemiBold" Margin="8,0,24,0" />
+                                    <TextBlock Grid.Column="3" Text="{x:Bind NetText}" ToolTipService.ToolTip="{x:Bind NetTooltip}" Style="{StaticResource SalesCell}" HorizontalAlignment="Right" TextAlignment="Right" TextWrapping="Wrap" TextTrimming="None" MaxLines="0" FontWeight="SemiBold" Margin="8,0,24,0" />
                                 </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>

@@ -82,7 +82,46 @@ public class ApiService
         return _cachedRefunds;
     }
 
-    public sealed record RefundSaveResult(int Added, int Updated, int Unchanged, int Skipped);
+    public sealed record GiftRecalculationResult(int Batches, int Orders, int PendingSetGroups);
+    public sealed record OrderDeleteResult(bool Deleted, GiftRecalculationResult Gifts);
+    public sealed class GiftChoiceRequiredException() : InvalidOperationException("请先选择本批次的赠品选项。");
+
+    public static async Task<OrderDeleteResult> DeleteOrderAsync(order selected, bool? fullGift = null, bool? setGift = null)
+    {
+        using var response = await _httpClient.PostAsJsonAsync("/api/orders/delete", new
+        {
+            OrderId = selected.orderId, ExpectedUserId = selected.userId, ExpectedBatch = selected.tag,
+            FullGift = fullGift, SetGift = setGift
+        });
+        if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed)
+            throw new InvalidOperationException("服务器尚未支持删除单笔订单，请更新后端。");
+        var body = await response.Content.ReadAsStringAsync();
+        if (!response.IsSuccessStatusCode)
+        {
+            string? message = null;
+            try
+            {
+                using var json = JsonDocument.Parse(body);
+                if (json.RootElement.TryGetProperty("code", out var code) && code.GetString() == "gift_choice_required")
+                    throw new GiftChoiceRequiredException();
+                if (json.RootElement.TryGetProperty("message", out var value)) message = value.GetString();
+            }
+            catch (JsonException) { }
+            throw new InvalidOperationException(message ?? $"删除失败（HTTP {(int)response.StatusCode}）。");
+        }
+        var result = JsonSerializer.Deserialize<OrderDeleteResult>(body, new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            ?? throw new InvalidOperationException("服务器响应异常，请刷新确认订单是否已删除。");
+        await _cacheLock.WaitAsync();
+        try
+        {
+            _cachedOrders.RemoveAll(o => o.orderId == selected.orderId);
+            foreach (var user in _cachedUsers) user.orders.RemoveAll(o => o.orderId == selected.orderId);
+        }
+        finally { _cacheLock.Release(); }
+        return result;
+    }
+    public sealed record RefundSaveResult(int Added, int Updated, int Unchanged, int Skipped, int DeletedSkipped = 0,
+        GiftRecalculationResult? Gifts = null);
 
     public sealed record BackupInfo(Guid Id, DateTimeOffset CreatedAt, int Users, int Orders, int Refunds);
 
@@ -137,19 +176,23 @@ public class ApiService
             ?? throw new InvalidOperationException("服务器未返回备份信息。");
     }
 
-    public static async Task DeleteRefundAsync(string refundId)
+    public static Task DeleteRefundAsync(string refundId) => DeleteRefundsAsync([refundId]);
+
+    public static async Task DeleteRefundsAsync(IReadOnlyList<string> refundIds)
     {
-        if (string.IsNullOrWhiteSpace(refundId)) throw new ArgumentException("退款编号不能为空。", nameof(refundId));
+        if (refundIds.Count == 0 || refundIds.Any(string.IsNullOrWhiteSpace))
+            throw new ArgumentException("请选择有效的退款编号。", nameof(refundIds));
+        var ids = refundIds.ToHashSet(StringComparer.Ordinal);
         await _cacheLock.WaitAsync();
         try
         {
-            using var response = await _httpClient.DeleteAsync($"/api/refunds/{Uri.EscapeDataString(refundId)}");
+            using var response = await _httpClient.PostAsJsonAsync("/api/refunds/delete-batch", new { RefundIds = ids });
             if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed)
-                throw new InvalidOperationException("服务器尚未支持手动删除退款，请先更新 CookieSheetServer。");
+                throw new InvalidOperationException("服务器尚未支持批量软删除，请先更新 CookieSheetServer。");
             response.EnsureSuccessStatusCode();
 
-            var affectedOrders = _cachedRefunds.Where(r => r.refundId == refundId).Select(r => r.orderId).ToHashSet();
-            _cachedRefunds.RemoveAll(r => r.refundId == refundId);
+            var affectedOrders = _cachedRefunds.Where(r => ids.Contains(r.refundId)).Select(r => r.orderId).ToHashSet();
+            _cachedRefunds.RemoveAll(r => ids.Contains(r.refundId));
             var remaining = _cachedRefunds.ToLookup(r => r.orderId);
             foreach (var order in _cachedOrders.Where(o => affectedOrders.Contains(o.orderId)))
                 order.ApplyRefunds(remaining[order.orderId]);
@@ -157,9 +200,9 @@ public class ApiService
         finally { _cacheLock.Release(); }
     }
 
-    public static async Task<RefundSaveResult> SaveRefundsBatchAsync(List<RefundRecord> records)
+    public static async Task<RefundSaveResult> SaveRefundsBatchAsync(List<RefundRecord> records, List<BatchGiftChoice> giftChoices)
     {
-        using var response = await _httpClient.PostAsJsonAsync("/api/refunds/batch", records);
+        using var response = await _httpClient.PostAsJsonAsync("/api/refunds/import-with-gifts", new { Records = records, GiftChoices = giftChoices });
         if (response.StatusCode == HttpStatusCode.NotFound)
             throw new InvalidOperationException("服务器尚未支持退款导入，请先更新 CookieSheetServer 并执行数据库迁移。");
         if (!response.IsSuccessStatusCode)
@@ -207,6 +250,33 @@ public class ApiService
     public static async Task SaveOrdersBatchAsync(List<order> orders)
     {
         using var response = await PostAsJsonWithLoggingAsync("/api/orders/batch", orders);
+    }
+
+    public static async Task<GiftRecalculationResult> ImportOrdersAsync(string batch, List<order> orders, List<user> newUsers, List<order> postageOrders, List<BatchGiftChoice> giftChoices, List<string> closedOrderIds)
+    {
+        var assignments = orders.Where(o => o.user != null && newUsers.Contains(o.user))
+            .ToDictionary(o => o.orderId, o => newUsers.IndexOf(o.user));
+        using var response = await _httpClient.PostAsJsonAsync("/api/orders/import-excluding-closed", new
+        {
+            Batch = batch, Orders = orders, NewUsers = newUsers, NewUserAssignments = assignments, GiftChoices = giftChoices,
+            ClosedOrderIds = closedOrderIds,
+            PostageOrderIds = postageOrders.Select(o => o.orderId).Distinct().ToList()
+        });
+        if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed)
+            throw new InvalidOperationException("服务器尚未支持排除关闭订单，请先更新 CookieSheetServer。");
+        if (!response.IsSuccessStatusCode)
+        {
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            if (json.RootElement.TryGetProperty("code", out var code) && code.GetString() == "order_batch_conflict")
+                throw new InvalidOperationException("服务器仍在使用旧的跨批次限制，请升级服务器后重新导入。");
+            throw new InvalidOperationException(json.RootElement.TryGetProperty("message", out var message)
+                ? message.GetString() : $"导入失败（HTTP {(int)response.StatusCode}）。");
+        }
+        var body = await response.Content.ReadAsStringAsync();
+        if (string.IsNullOrWhiteSpace(body))
+            throw new InvalidOperationException("订单已保存，但服务器尚未支持自动重算赠品，请升级服务器后重新导入。");
+        return JsonSerializer.Deserialize<GiftRecalculationResult>(body, new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            ?? throw new InvalidOperationException("服务器未返回赠品重算结果。");
     }
 
     public static async Task ClearDataAsync()
@@ -381,12 +451,13 @@ public class ApiService
         target.productName = source.productName;
         target.productModel = source.productModel;
         target.productCount = source.productCount;
-        target.productUnitPrice = source.productUnitPrice;
-        target.productId = source.productId;
-        target.ApplyRefunds(_cachedRefunds);
         target.price = source.price;
+        target.receivableAmount = source.receivableAmount;
+        target.productRefundAmount = source.productRefundAmount;
+        target.orderRefundStatus = source.orderRefundStatus;
         target.sended = source.sended;
         target.tag = source.tag;
+        target.ApplyRefunds(_cachedRefunds);
     }
 
     private static async Task<HttpResponseMessage> PostAsJsonWithLoggingAsync<T>(string path, T payload)

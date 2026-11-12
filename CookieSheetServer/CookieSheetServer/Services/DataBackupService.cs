@@ -17,7 +17,7 @@ public sealed class DataBackupService(string directory)
     private readonly string _path = Path.Combine(Path.GetFullPath(directory), "latest.json");
 
     public sealed record Snapshot(int Version, Guid Id, DateTimeOffset CreatedAt, string Database,
-        List<user> Users, List<order> Orders, List<RefundRecord> Refunds)
+        List<user> Users, List<order> Orders, List<RefundRecord> Refunds, List<BatchGiftChoice>? GiftChoices = null)
     {
         public BackupInfo Info => new(Id, CreatedAt, Users.Count, Orders.Count, Refunds.Count);
     }
@@ -42,7 +42,8 @@ public sealed class DataBackupService(string directory)
                 db.Database.GetDbConnection().Database,
                 await db.user.AsNoTracking().ToListAsync(),
                 await db.order.AsNoTracking().ToListAsync(),
-                await db.refunds.AsNoTracking().ToListAsync());
+                await db.refunds.IgnoreQueryFilters().AsNoTracking().ToListAsync(),
+                await db.giftChoices.AsNoTracking().ToListAsync());
             await transaction.CommitAsync();
             Validate(snapshot);
             var payload = JsonSerializer.SerializeToUtf8Bytes(snapshot);
@@ -77,14 +78,16 @@ public sealed class DataBackupService(string directory)
 
             await using var transaction = await db.Database.BeginTransactionAsync();
             // Prevent imports/deletions from interleaving with replacement. Readers see a committed state.
-            await db.Database.ExecuteSqlRawAsync("LOCK TABLE \"user\", \"order\", refunds IN EXCLUSIVE MODE");
-            await db.refunds.ExecuteDeleteAsync();
+            await db.Database.ExecuteSqlRawAsync("LOCK TABLE \"user\", \"order\", refunds, \"giftChoices\" IN EXCLUSIVE MODE");
+            await db.giftChoices.ExecuteDeleteAsync();
+            await db.refunds.IgnoreQueryFilters().ExecuteDeleteAsync();
             await db.order.ExecuteDeleteAsync();
             await db.user.ExecuteDeleteAsync();
             db.ChangeTracker.Clear();
             db.user.AddRange(snapshot.Users);
             db.order.AddRange(snapshot.Orders);
             db.refunds.AddRange(snapshot.Refunds);
+            db.giftChoices.AddRange(snapshot.GiftChoices ?? []);
             await db.SaveChangesAsync();
             await db.Database.ExecuteSqlRawAsync("""
                 SELECT setval(pg_get_serial_sequence('"user"', 'userId'),
@@ -123,6 +126,9 @@ public sealed class DataBackupService(string directory)
             || snapshot.Refunds.Any(r => r == null))
             throw new InvalidOperationException("备份内容不完整或版本不兼容。");
         var users = snapshot.Users.Select(u => u.userId).ToHashSet();
+        if (snapshot.GiftChoices is { } choices && (choices.Any(c => c == null || c.Batch == null)
+            || choices.Select(c => c.Batch).Distinct(StringComparer.Ordinal).Count() != choices.Count))
+            throw new InvalidOperationException("备份赠品选择校验失败。");
         if (users.Count != snapshot.Users.Count
             || snapshot.Orders.Select(o => o.orderId).Distinct().Count() != snapshot.Orders.Count
             || snapshot.Refunds.Select(r => r.refundId).Distinct().Count() != snapshot.Refunds.Count

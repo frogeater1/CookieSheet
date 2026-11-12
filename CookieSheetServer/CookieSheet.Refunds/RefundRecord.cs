@@ -27,13 +27,14 @@ public sealed class RefundRecord
     public string sourceFile { get; set; } = "";
     public int sourceRow { get; set; }
     public DateTimeOffset importedAt { get; set; }
+    public bool isDeleted { get; set; }
 }
 
 public static class RefundRules
 {
     public static bool IsSuccessfulStatus(string? status) => status?.Trim() == "退款成功";
 
-    public static bool IsSuccessful(RefundRecord record) => IsSuccessfulStatus(record.status);
+    public static bool IsSuccessful(RefundRecord record) => !record.isDeleted && IsSuccessfulStatus(record.status);
 
     public static bool IsPostageProduct(string? name, string? model) =>
         name?.Trim() == "补邮" || model?.Trim() == "非偏远地区补邮";

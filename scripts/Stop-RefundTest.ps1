@@ -4,7 +4,7 @@ $stateDir = Join-Path $projectRoot '.local/refund-test'
 $statePath = Join-Path $stateDir 'environment.json'
 if (-not (Test-Path -LiteralPath $statePath)) { throw 'No temporary test environment was created.' }
 $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
-$expectedDll = Join-Path $stateDir 'server/CookieSheetServer.dll'
+$expectedDll = if ($state.ServerDll) { $state.ServerDll } else { Join-Path $stateDir 'server/CookieSheetServer.dll' }
 if ($state.ServerPid) {
     $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId=$($state.ServerPid)"
     if ($processInfo -and $processInfo.Name -eq 'dotnet.exe' -and $processInfo.CommandLine.Contains($expectedDll)) {

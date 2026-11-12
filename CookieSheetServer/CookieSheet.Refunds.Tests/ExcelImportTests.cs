@@ -15,6 +15,8 @@ public class ExcelImportTests
         Assert.Equal(2, rows.Count);
         var row = rows[0];
         Assert.Equal("QQ:00123456;CN:测试", row.下单模板信息);
+        Assert.Equal("", row.卖家备注);
+        Assert.Equal("00123456", OrderImportReader.ResolveQq(row, "00123456"));
         Assert.Equal("13800138000", row.手机号);
         Assert.Equal("测试收件人", row.收货人);
         Assert.Equal("测试账号", row.下单账号);
@@ -22,8 +24,6 @@ public class ExcelImportTests
         Assert.Equal("企划", row.商品名称);
         Assert.Equal("明信片", row.商品型号);
         Assert.Equal("5", row.商品件数);
-        Assert.Equal("00123", row.商品ID);
-        Assert.Equal("7", row.商品单价);
         Assert.Equal("8", row.运费);
         Assert.Equal("43.5", row.实付金额);
         Assert.Equal("00144115526827130368", row.订单编号);

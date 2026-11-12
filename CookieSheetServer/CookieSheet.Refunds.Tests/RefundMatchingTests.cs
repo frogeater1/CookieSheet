@@ -4,6 +4,16 @@ namespace CookieSheet.Refunds.Tests;
 
 public class RefundMatchingTests
 {
+    [Fact]
+    public void MatchingUsesTrimmedNameAndModelEvenWhenRefundContainsAnId()
+    {
+        var refund = Refund("r1", "o1");
+        refund.productId = "unrelated-id";
+        Assert.True(RefundCalculator.Matches(new(" 企划 ", " 明信片 ", 2), refund));
+        Assert.False(RefundCalculator.Matches(new("其他企划", "明信片", 2), refund));
+        Assert.False(RefundCalculator.Matches(new("企划", "色纸", 2), refund));
+    }
+
     private static RefundRecord Refund(string id, string orderId, string name = "企划", string model = "明信片", string status = "退款成功") =>
         new() { refundId = id, orderId = orderId, productName = name, productModel = model, status = status };
 
@@ -12,8 +22,8 @@ public class RefundMatchingTests
     {
         var orders = new Dictionary<string, IReadOnlyList<OrderedProduct>>
         {
-            ["existing"] = [new("企划", "明信片", 5, 7)],
-            ["ambiguous"] = [new("企划", "明信片", 1, 7), new("企划", "明信片", 2, 7)]
+            ["existing"] = [new("企划", "明信片", 5)],
+            ["ambiguous"] = [new("企划", "明信片", 1), new("企划", "明信片", 2)]
         };
         var refunds = new[]
         {
@@ -36,7 +46,7 @@ public class RefundMatchingTests
         var refund = Refund("r1", "o1");
         var orders = new Dictionary<string, IReadOnlyList<OrderedProduct>>();
         Assert.Single(RefundMatching.FindUnmatched([refund, refund], orders));
-        orders["o1"] = [new("企划", "明信片", 5, 7)];
+        orders["o1"] = [new("企划", "明信片", 5)];
         Assert.Empty(RefundMatching.FindUnmatched([refund, refund], orders));
     }
 

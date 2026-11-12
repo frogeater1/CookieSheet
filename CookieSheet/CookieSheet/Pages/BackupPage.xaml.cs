@@ -41,6 +41,7 @@ public sealed partial class BackupPage : Page
         _busy = busy;
         BackupButton.IsEnabled = !busy;
         RestoreButton.IsEnabled = !busy && _latest != null;
+        ClearButton.IsEnabled = !busy;
         BusyIndicator.IsActive = busy;
         BusyIndicator.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -108,6 +109,38 @@ public sealed partial class BackupPage : Page
         {
             DebugConsole.Log(ex);
             ShowStatus($"未能确认恢复结果：{ex.Message} 如连接中断，请刷新查询页面核实数据。", InfoBarSeverity.Error);
+        }
+        finally { SetBusy(false); }
+    }
+
+    private async void OnClearDataClick(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        SetBusy(true);
+        StatusMessage.IsOpen = false;
+        try
+        {
+            var dialog = new ContentDialog
+            {
+                Title = "清空全部数据",
+                Content = new TextBlock
+                {
+                    Text = "确定清空当前服务器的全部数据吗？\n\n包括全部用户、所有批次订单、退款记录（含待匹配退款和删除标记）以及赠品计算选择。清空后，同编号退款可以再次导入。\n\n最后一份手动备份会保留；本次操作不会自动备份当前数据。",
+                    TextWrapping = TextWrapping.Wrap
+                },
+                PrimaryButtonText = "确认清空全部数据",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = XamlRoot
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+            await ApiService.ClearDataAsync();
+            ShowStatus("全部用户、订单、退款及删除标记、赠品计算选择已清空，客户端缓存已清除。最后一份手动备份仍保留。", InfoBarSeverity.Success);
+        }
+        catch (Exception ex)
+        {
+            DebugConsole.Log(ex);
+            ShowStatus($"未能确认清空结果：{ex.Message} 如连接中断，请刷新查询页面核实数据。", InfoBarSeverity.Error);
         }
         finally { SetBusy(false); }
     }

@@ -2,12 +2,14 @@ using System;
 using System.Text.Json.Serialization;
 using System.Collections.Generic;
 using System.Linq;
+using System.ComponentModel;
 using CookieSheet.Refunds;
 
 namespace CookieSheet.Data;
 
-public class order
+public class order : INotifyPropertyChanged
 {
+    public event PropertyChangedEventHandler? PropertyChanged;
     public string orderId { get; set; }
 
     [JsonIgnore]
@@ -21,8 +23,6 @@ public class order
     public string[] productModel { get; set; }
 
     public int[] productCount { get; set; }
-    public decimal[] productUnitPrice { get; set; } = [];
-    public string[] productId { get; set; } = [];
 
     [JsonIgnore] public List<ProductRefundResult> ProductRefunds { get; set; } = [];
 
@@ -33,15 +33,31 @@ public class order
         var counts = productCount ?? [];
         return Enumerable.Range(0, Math.Max(names.Length, Math.Max(models.Length, counts.Length)))
             .Select(i => new OrderedProduct(names.ElementAtOrDefault(i) ?? "", models.ElementAtOrDefault(i) ?? "",
-                counts.ElementAtOrDefault(i), (productUnitPrice ?? []).ElementAtOrDefault(i), (productId ?? []).ElementAtOrDefault(i) ?? ""))
+                counts.ElementAtOrDefault(i)))
             .ToList();
     }
 
     public void ApplyRefunds(IEnumerable<RefundRecord> records) =>
-        ProductRefunds = RefundCalculator.Calculate(orderId, GetOrderedProducts(), records);
+        ProductRefunds = RefundCalculator.Calculate(orderId, GetOrderedProducts(), records,
+            new OrderRefundSnapshot(productRefundAmount, receivableAmount, price, orderRefundStatus));
 
     public decimal price { get; set; }
-    public bool sended { get; set; }
+    public decimal? receivableAmount { get; set; }
+    public decimal? productRefundAmount { get; set; }
+    public string orderRefundStatus { get; set; } = "";
+    private bool _sended;
+    public bool sended
+    {
+        get => _sended;
+        set
+        {
+            if (_sended == value) return;
+            _sended = value;
+            PropertyChanged?.Invoke(this, new(nameof(sended)));
+            PropertyChanged?.Invoke(this, new(nameof(ItemOpacity)));
+            PropertyChanged?.Invoke(this, new(nameof(PostageButtonVisibility)));
+        }
+    }
 
     public string tag { get; set; }
 
@@ -56,6 +72,9 @@ public class order
     public string FormattedOrderedAt => orderedAt.ToString("MM-dd HH:mm:ss");
 
     public string FormattedPrice => price.ToString("C");
+    [JsonIgnore] public string AmountTooltip => $"实付金额：{FormattedPrice}"
+        + (receivableAmount.HasValue ? $"\n应收金额：{receivableAmount.Value:C}" : "")
+        + (string.IsNullOrWhiteSpace(orderRefundStatus) ? "" : $"\n订单表退款状态：{orderRefundStatus}");
 
     public double ItemOpacity => sended ? 0.5 : 1.0;
 

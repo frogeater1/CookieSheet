@@ -11,6 +11,10 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\CookieSheetServer\CookieSheetServer.csproj" />
+    <Compile Include="..\..\CookieSheet\CookieSheet\Helpers\OrderListQuery.cs" Link="Client\OrderListQuery.cs" />
+    <Compile Include="..\..\CookieSheet\CookieSheet\ViewModels\OrderListItemViewModel.cs" Link="Client\OrderListItemViewModel.cs" />
+    <Compile Include="..\..\CookieSheet\CookieSheet\Data\Entities\order.cs" Link="Client\order.cs" />
+    <Compile Include="..\..\CookieSheet\CookieSheet\Data\Entities\user.cs" Link="Client\user.cs" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" PrivateAssets="all" />

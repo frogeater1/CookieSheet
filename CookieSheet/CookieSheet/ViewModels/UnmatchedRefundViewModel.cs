@@ -1,10 +1,23 @@
 using System;
+using System.ComponentModel;
 using CookieSheet.Refunds;
 
 namespace CookieSheet;
 
-public sealed class UnmatchedRefundViewModel
+public sealed class UnmatchedRefundViewModel : INotifyPropertyChanged
 {
+    public event PropertyChangedEventHandler? PropertyChanged;
+    private bool _isSelected;
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            if (_isSelected == value) return;
+            _isSelected = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+        }
+    }
     public UnmatchedRefundViewModel(UnmatchedRefund item)
     {
         var refund = item.Refund;

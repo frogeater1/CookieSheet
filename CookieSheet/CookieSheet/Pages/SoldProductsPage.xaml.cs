@@ -104,8 +104,10 @@ public sealed partial class SoldProductsPage : Page
             .OrderBy(group => group.Key, StringComparer.Ordinal)
             .Select(group => new SoldProductGroup(group.Key, group)).ToList();
         GroupedProducts.Source = groups;
-        var net = result.NetQuantity is long quantity ? $"净售出 {quantity:N0} 件" : "净售出待核对";
+        var net = result.NetSummaryText;
         ResultsSummary.Text = $"{groups.Count:N0} 个批次 · {result.Products.Count:N0} 项批次商品 · {net}";
+        if (result.InvalidDetailsCount > 0)
+            ResultsSummary.Text += $" · {result.InvalidDetailsCount:N0} 条商品记录退款明细有误，已按未退款计入";
         EmptyStateText.Text = _orders.Count == 0
             ? "暂无订单，请先到“数据导入”导入订单。"
             : "没有符合条件的商品。请调整搜索、批次或赠品选项。";

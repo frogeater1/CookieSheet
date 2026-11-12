@@ -22,8 +22,8 @@ $env:COOKIESHEET_TEST_DB_PASSWORD = $state.Password
 & docker compose -f (Join-Path $projectRoot 'CookieSheetServer/compose.refund-test.yaml') up -d --wait
 if ($LASTEXITCODE -ne 0) { throw 'Could not start the temporary database.' }
 $serverProject = Join-Path $projectRoot 'CookieSheetServer/CookieSheetServer/CookieSheetServer.csproj'
-$serverDir = Join-Path $stateDir 'server'
-$serverDll = Join-Path $serverDir 'CookieSheetServer.dll'
+$serverDll = if ($state.ServerDll) { $state.ServerDll } else { Join-Path $stateDir 'server/CookieSheetServer.dll' }
+$serverDir = Split-Path -Parent $serverDll
 $serverProcess = if ($state.ServerPid) { Get-Process -Id $state.ServerPid -ErrorAction SilentlyContinue } else { $null }
 $ready = $false
 if ($serverProcess -and $serverProcess.ProcessName -eq 'dotnet') {

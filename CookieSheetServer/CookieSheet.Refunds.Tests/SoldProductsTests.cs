@@ -7,7 +7,7 @@ public class SoldProductsTests
 {
     private static ProductRefundResult Product(string name = "企划", string model = "明信片", int quantity = 5,
         int? refunded = 0, ProductRefundStatus status = ProductRefundStatus.None) =>
-        new(new OrderedProduct(name, model, quantity, 7), status, refunded, 0, "");
+        new(new OrderedProduct(name, model, quantity), status, refunded, 0, "");
 
     [Fact]
     public void SameBatchCombinesOrdersButDifferentBatchesAndModelsStaySeparate()
@@ -56,10 +56,10 @@ public class SoldProductsTests
     [Fact]
     public void PartialAndFullRefundsUseExistingCalculatorAndKeepFullyRefundedProducts()
     {
-        var products = new[] { new OrderedProduct("企划", "明信片", 5, 7), new OrderedProduct("企划", "挂件", 2, 7) };
+        var products = new[] { new OrderedProduct("企划", "明信片", 5), new OrderedProduct("企划", "挂件", 2) };
         var refunds = new[] {
-            new RefundRecord { orderId = "o1", refundId = "r1", productName = "企划", productModel = "明信片", status = "退款成功", refundAmount = 21 },
-            new RefundRecord { orderId = "o1", refundId = "r2", productName = "企划", productModel = "挂件", status = "退款成功", refundAmount = 14 },
+            new RefundRecord { orderId = "o1", refundId = "r1", productName = "企划", productModel = "明信片", status = "退款成功", productPaidAmount = 35, refundAmount = 21 },
+            new RefundRecord { orderId = "o1", refundId = "r2", productName = "企划", productModel = "挂件", status = "退款成功", productPaidAmount = 14, refundAmount = 14 },
             new RefundRecord { orderId = "missing", refundId = "r3", productName = "企划", productModel = "明信片", status = "退款成功", refundAmount = 7 },
             new RefundRecord { orderId = "o1", refundId = "r4", productName = "别的商品", productModel = "明信片", status = "退款成功", refundAmount = 7 },
             new RefundRecord { orderId = "o1", refundId = "r5", productName = "企划", productModel = "明信片", status = "退款中", refundAmount = 7 }
@@ -93,7 +93,7 @@ public class SoldProductsTests
     [Fact]
     public void AmbiguousDuplicateOrderLinesRemainPending()
     {
-        OrderedProduct[] products = [new("企划", "明信片", 5, 7), new("企划", "明信片", 2, 7)];
+        OrderedProduct[] products = [new("企划", "明信片", 5), new("企划", "明信片", 2)];
         var refund = new RefundRecord { orderId = "o1", refundId = "r1", productName = "企划", productModel = "明信片", status = "退款成功", refundAmount = 7 };
         var result = SoldProductsQuery.Apply([new("o1", "批次", RefundCalculator.Calculate("o1", products, [refund]))]);
         var row = Assert.Single(result.Products);

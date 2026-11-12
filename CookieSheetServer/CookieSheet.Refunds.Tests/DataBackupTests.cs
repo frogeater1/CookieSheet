@@ -62,19 +62,21 @@ public class DataBackupTests
         {
             await using var db = new AppDbContext(options);
             await db.Database.MigrateAsync();
+            db.giftChoices.Add(new() { Batch = "批次一", FullGift = true, SetGift = false });
             var now = DateTimeOffset.Parse("2026-09-22T10:20:30Z");
             db.user.Add(new user { userId = 900, tel = "123", qq = "456", cn = "中文", receiver = "收件人",
                 account = "账户", address = "地址", price = 12.34m });
             db.order.Add(new order { orderId = "订单一", userId = 900, tel = "789", orderedAt = now,
                 productName = ["商品", "99满赠"], productModel = ["型号", ""], productCount = [3, 1],
-                productUnitPrice = [4.12m, 0], productId = ["p1", "gift"], price = 12.36m, tag = "批次一", sended = true });
+                price = 12.36m, tag = "批次一", sended = true,
+                receivableAmount = 16.48m, productRefundAmount = 4.12m, orderRefundStatus = "退款完成(部分退款)" });
             db.refunds.AddRange(new RefundRecord { refundId = "r1", orderId = "订单一", productName = "商品", productModel = "型号",
                 productId = "p1", productCode = "code", modelCode = "model", productPaidAmount = 12.36m,
                 shippingPaidAmount = 2, refundAmount = 4.12m, shippingRefundAmount = 1, status = "退款成功",
                 refundType = "退货退款", saleStage = "售后", initiator = "买家", reason = "原因", shippingStatus = "已寄回",
                 orderPaidAt = now, requestedAt = now, completedAt = now, deadlineAt = now,
                 sourceFile = "原表.xlsx", sourceRow = 20, importedAt = now },
-                new RefundRecord { refundId = "unmatched", orderId = "尚无订单", status = "退款成功", importedAt = now });
+                new RefundRecord { refundId = "unmatched", orderId = "尚无订单", status = "退款成功", importedAt = now, isDeleted = true });
             await db.SaveChangesAsync();
             var expected = await ReadData(db);
             var first = await service.CreateAsync(db);
@@ -88,7 +90,8 @@ public class DataBackupTests
             Assert.Equal(firstBytes, await File.ReadAllBytesAsync(path));
             Directory.Delete(path + ".tmp");
 
-            await db.refunds.ExecuteDeleteAsync();
+            await db.refunds.IgnoreQueryFilters().ExecuteDeleteAsync();
+            await db.giftChoices.ExecuteDeleteAsync();
             await db.order.ExecuteDeleteAsync();
             await db.user.ExecuteDeleteAsync();
             db.ChangeTracker.Clear();
@@ -111,7 +114,29 @@ public class DataBackupTests
             await File.WriteAllBytesAsync(path, firstBytes);
             await service.RestoreAsync(db, first.Id);
             Assert.Equal(expected, await ReadData(db));
+            var choice = await db.giftChoices.AsNoTracking().SingleAsync();
+            Assert.True(choice.FullGift);
+            Assert.False(choice.SetGift);
+            Assert.Single(await db.refunds.AsNoTracking().ToListAsync());
+            Assert.True((await db.refunds.IgnoreQueryFilters().AsNoTracking().SingleAsync(r => r.refundId == "unmatched")).isDeleted);
+            var skipped = await RefundImportService.SaveAsync(db, [new RefundRecord
+                { refundId = "unmatched", orderId = "新订单", productName = "新商品", status = "退款成功" }]);
+            Assert.Equal(1, skipped.DeletedSkipped);
+            Assert.Equal(expected, await ReadData(db));
             Assert.Equal(firstBytes, await File.ReadAllBytesAsync(path));
+            await service.RestoreAsync(db, first.Id);
+            Assert.Equal(expected, await ReadData(db));
+
+            // Backups from before gift choices existed remain restorable without inventing consent.
+            using (var envelope = JsonDocument.Parse(firstBytes))
+            {
+                var snapshot = JsonSerializer.Deserialize<DataBackupService.Snapshot>(envelope.RootElement.GetProperty("Payload").GetBytesFromBase64())!;
+                var payload = JsonSerializer.SerializeToUtf8Bytes(snapshot with { GiftChoices = null });
+                await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new { Payload = payload, Sha256 = Convert.ToHexString(SHA256.HashData(payload)) }));
+            }
+            await service.RestoreAsync(db, first.Id);
+            Assert.Empty(await db.giftChoices.AsNoTracking().ToListAsync());
+            await File.WriteAllBytesAsync(path, firstBytes);
             await service.RestoreAsync(db, first.Id);
             Assert.Equal(expected, await ReadData(db));
 
@@ -128,7 +153,7 @@ public class DataBackupTests
             Assert.Equal(second, await service.GetLatestAsync());
 
             // Empty data is a valid explicitly requested snapshot and restores to empty.
-            await db.refunds.ExecuteDeleteAsync();
+            await db.refunds.IgnoreQueryFilters().ExecuteDeleteAsync();
             await db.order.ExecuteDeleteAsync();
             await db.user.ExecuteDeleteAsync();
             var empty = await service.CreateAsync(db);
@@ -149,6 +174,7 @@ public class DataBackupTests
     {
         Users = await db.user.AsNoTracking().OrderBy(u => u.userId).ToListAsync(),
         Orders = await db.order.AsNoTracking().OrderBy(o => o.orderId).ToListAsync(),
-        Refunds = await db.refunds.AsNoTracking().OrderBy(r => r.refundId).ToListAsync()
+        Refunds = await db.refunds.IgnoreQueryFilters().AsNoTracking().OrderBy(r => r.refundId).ToListAsync(),
+        GiftChoices = await db.giftChoices.AsNoTracking().OrderBy(c => c.Batch).ToListAsync()
     });
 }

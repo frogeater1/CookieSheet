@@ -109,6 +109,35 @@ app.MapPost("/api/users/batch", async (List<user> users, AppDbContext db) =>
     return Results.Ok(newUsers);
 });
 
+// Older clients do not ask for gift choices; do not silently enable gifts on their behalf.
+app.MapPost("/api/orders/import", () => Results.BadRequest(new { message = "请更新客户端，每次导入需手动确认各批次是否计算赠品。" }));
+app.MapPost("/api/refunds/batch", () => Results.BadRequest(new { message = "请更新客户端，每次导入需手动确认各批次是否计算赠品。" }));
+
+app.MapPost("/api/orders/import-with-gifts", () => Results.BadRequest(new { message = "请更新客户端，导入时需要识别并排除已关闭订单。" }));
+
+app.MapPost("/api/orders/import-excluding-closed", async (OrderImportRequest request, AppDbContext db) =>
+{
+    try
+    {
+        if (request.GiftChoices == null) throw new ArgumentException("请先逐批确认是否计算满赠和 Set赠。");
+        return Results.Ok(await OrderImportService.SaveAsync(db, request));
+    }
+    catch (ArgumentException ex) { return Results.BadRequest(new { message = ex.Message }); }
+    catch (DbUpdateException)
+    {
+        return Results.Conflict(new { message = "本次导入未保存，可能有其他导入同时修改了数据，请刷新后重试。" });
+    }
+});
+
+app.MapPost("/api/orders/delete", async (OrderDeleteRequest request, AppDbContext db) =>
+{
+    try { return Results.Ok(await OrderDeletionService.DeleteAsync(db, request)); }
+    catch (GiftChoiceRequiredException ex) { return Results.Conflict(new { code = "gift_choice_required", message = ex.Message }); }
+    catch (ArgumentException ex) { return Results.BadRequest(new { message = ex.Message }); }
+    catch (InvalidOperationException ex) { return Results.Conflict(new { message = ex.Message }); }
+    catch (DbUpdateException) { return Results.Conflict(new { message = "删除未完成，请刷新数据后重试。" }); }
+});
+
 app.MapPost("/api/orders/batch", async (List<order> orders, AppDbContext db) =>
 {
     foreach (var order in orders)
@@ -132,6 +161,12 @@ app.MapPost("/api/orders/batch", async (List<order> orders, AppDbContext db) =>
 
 app.MapGet("/api/refunds", async (AppDbContext db) => await db.refunds.AsNoTracking().ToListAsync());
 
+app.MapPost("/api/refunds/delete-batch", async (RefundDeleteRequest request, AppDbContext db) =>
+{
+    try { return Results.Ok(new { Deleted = await RefundImportService.DeleteBatchAsync(db, request.RefundIds) }); }
+    catch (ArgumentException ex) { return Results.BadRequest(new { message = ex.Message }); }
+});
+
 app.MapDelete("/api/refunds/{refundId}", async (string refundId, AppDbContext db) =>
 {
     if (string.IsNullOrWhiteSpace(refundId)) return Results.BadRequest(new { message = "退款编号不能为空。" });
@@ -139,11 +174,12 @@ app.MapDelete("/api/refunds/{refundId}", async (string refundId, AppDbContext db
     return Results.NoContent();
 });
 
-app.MapPost("/api/refunds/batch", async (List<RefundRecord> records, AppDbContext db) =>
+app.MapPost("/api/refunds/import-with-gifts", async (RefundImportRequest request, AppDbContext db) =>
 {
     try
     {
-        return Results.Ok(await RefundImportService.SaveAsync(db, records));
+        if (request.GiftChoices == null) throw new ArgumentException("请先逐批确认是否计算满赠和 Set赠。");
+        return Results.Ok(await RefundImportService.SaveAsync(db, request.Records, request.GiftChoices));
     }
     catch (ArgumentException ex)
     {
@@ -153,11 +189,16 @@ app.MapPost("/api/refunds/batch", async (List<RefundRecord> records, AppDbContex
     {
         return Results.Conflict(new { message = "另一次导入同时更新了退款记录，请重新导入。" });
     }
+    catch (DbUpdateConcurrencyException)
+    {
+        return Results.Conflict(new { message = "退款记录已被其他操作删除，本次导入已撤回，请重新导入以跳过已删除记录。" });
+    }
 });
 
 app.MapPost("/api/clear", async (AppDbContext db) =>
 {
-    db.refunds.RemoveRange(db.refunds);
+    db.giftChoices.RemoveRange(db.giftChoices);
+    db.refunds.RemoveRange(db.refunds.IgnoreQueryFilters());
     db.order.RemoveRange(db.order);
     db.user.RemoveRange(db.user);
     await db.SaveChangesAsync();

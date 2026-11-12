@@ -13,17 +13,20 @@ public class AppDbContext : DbContext
     public DbSet<user> user { get; set; }
     public DbSet<order> order { get; set; }
     public DbSet<RefundRecord> refunds { get; set; }
+    public DbSet<BatchGiftChoice> giftChoices { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+        modelBuilder.Entity<BatchGiftChoice>().HasKey(g => g.Batch);
 
         modelBuilder.Entity<RefundRecord>().HasKey(r => r.refundId);
+        modelBuilder.Entity<RefundRecord>().HasQueryFilter(r => !r.isDeleted);
+        // A concurrent import must never overwrite a deletion made after it read the row.
+        modelBuilder.Entity<RefundRecord>().Property(r => r.isDeleted).HasDefaultValue(false).IsConcurrencyToken();
         modelBuilder.Entity<RefundRecord>().HasIndex(r => r.orderId);
         modelBuilder.Entity<RefundRecord>().ToTable("refunds", table =>
             table.HasCheckConstraint("CK_refunds_successful_status", "\"status\" = '退款成功'"));
-        modelBuilder.Entity<order>().Property(o => o.productUnitPrice).HasDefaultValueSql("ARRAY[]::numeric[]");
-        modelBuilder.Entity<order>().Property(o => o.productId).HasDefaultValueSql("ARRAY[]::text[]");
 
         // Configure OrderId to be the key
         modelBuilder.Entity<order>()

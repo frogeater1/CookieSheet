@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using System.Text.Json;
 using CookieSheet.Data;
 using CookieSheet.Helpers;
 using CookieSheet.Refunds;
@@ -42,7 +43,24 @@ namespace CookieSheet
                     await using var stream = await file.OpenStreamForReadAsync();
 
                     // Fetch current state from server
-                    var allUsers = await ApiService.GetCachedUsersAsync();
+                    await ApiService.RefreshCacheAsync();
+                    // Work on a detached snapshot so cancelled/failed imports cannot alter the visible cache.
+                    var allUsers = JsonSerializer.Deserialize<List<user>>(JsonSerializer.Serialize(await ApiService.GetCachedUsersAsync()))!;
+                    var existingOrders = JsonSerializer.Deserialize<List<order>>(JsonSerializer.Serialize(await ApiService.GetCachedOrdersAsync()))!
+                        .ToDictionary(o => o.orderId);
+                    var usersById = allUsers.ToDictionary(u => u.userId);
+                    foreach (var owner in allUsers) owner.orders.Clear();
+                    foreach (var o in existingOrders.Values)
+                        if (usersById.TryGetValue(o.userId, out var owner)) { o.user = owner; owner.orders.Add(o); }
+                    var records = OrderImportReader.LatestByOrderId(OrderImportReader.Read(stream, file.Name));
+                    var tag = Path.GetFileNameWithoutExtension(file.Name);
+                    var closedOrderIds = records.Where(r => r.IsClosed && !RefundRules.IsPostageProduct(r.商品名称, r.商品型号))
+                        .Select(r => r.订单编号).ToList();
+                    var closedBatches = closedOrderIds.Where(existingOrders.ContainsKey).Select(id => existingOrders[id].tag).ToArray();
+                    var repeatedIds = records.Where(r => !r.IsClosed && !RefundRules.IsPostageProduct(r.商品名称, r.商品型号))
+                        .Select(r => r.订单编号).Where(existingOrders.ContainsKey).ToHashSet();
+                    var movedCount = repeatedIds.Count(id => existingOrders[id].tag != tag);
+                    var previousBatches = repeatedIds.Select(id => existingOrders[id].tag).ToArray();
                     var userAdded = 0;
                     var orderAdded = 0;
 
@@ -51,16 +69,29 @@ namespace CookieSheet
                     var tempError = new List<string>();
                     var usersToUpdate = new List<user>();
                     var ordersToUpdate = new List<order>();
+                    var postageOrdersToUpdate = new List<order>();
 
-                    foreach (var r in OrderImportReader.Read(stream, file.Name))
+                    foreach (var r in records)
                     {
-                        if (IsEmptyRecord(r))
+                        if (IsEmptyRecord(r) || r.IsClosed)
                         {
                             continue;
                         }
 
                         var isPostage = RefundRules.IsPostageProduct(r.商品名称, r.商品型号);
-                        if (isPostage && (r.退款状态 == "退款完成" || r.订单状态 == "已关闭"))
+                        // Match globally by order ID before examining potentially changed user information.
+                        if (!isPostage && existingOrders.TryGetValue(r.订单编号, out var existingOrder))
+                        {
+                            existingOrder.tag = tag;
+                            existingOrder.price = decimal.Parse(r.实付金额);
+                            existingOrder.receivableAmount = OrderAmountRules.ReadReceivable(r.应收金额);
+                            existingOrder.productRefundAmount = OrderAmountRules.ReadProductRefund(r.商品已退款金额);
+                            existingOrder.orderRefundStatus = r.退款状态.Trim();
+                            if (!ordersToUpdate.Contains(existingOrder)) ordersToUpdate.Add(existingOrder);
+                            continue;
+                        }
+
+                        if (isPostage && r.退款状态 == "退款完成")
                         {
                             // Refunded regular orders must remain available for later refund reconciliation.
                             continue;
@@ -77,6 +108,8 @@ namespace CookieSheet
                             qq = userInfo!.GetValueOrDefault("QQ", null) ?? userInfo.GetValueOrDefault("QQ号", "");
                             cn = userInfo!.GetValueOrDefault("cn", null) ?? userInfo.GetValueOrDefault("CN", "");
                         }
+
+                        qq = OrderImportReader.ResolveQq(r, qq);
 
                         var user = qq != ""
                             ? allUsers.FirstOrDefault(x => x.qq == qq)
@@ -108,10 +141,10 @@ namespace CookieSheet
                         if (isPostage)
                         {
                             var sendedTime = ParseUtc8DateTime(r.发货时间);
-                            foreach (var o in user.orders.Where(x => x.orderedAt < sendedTime))
+                            foreach (var o in user.orders.Where(x => x.orderedAt < sendedTime && !repeatedIds.Contains(x.orderId)))
                             {
                                 o.sended = true;
-                                if (!ordersToUpdate.Contains(o)) ordersToUpdate.Add(o);
+                                if (!postageOrdersToUpdate.Contains(o)) postageOrdersToUpdate.Add(o);
                             }
                         }
                         else
@@ -126,9 +159,10 @@ namespace CookieSheet
                                     productName = r.商品名称.Split(';'),
                                     productModel = (r.商品型号 == "" ? r.商品名称 : r.商品型号).Split(';'),
                                     productCount = ParseProductCounts(r.商品件数),
-                                    productId = r.商品ID.Split(';'),
-                                    productUnitPrice = OrderImportPricing.Read(r.商品单价, r.运费, decimal.Parse(r.实付金额), ParseProductCounts(r.商品件数)),
                                     price = decimal.Parse(r.实付金额),
+                                    receivableAmount = OrderAmountRules.ReadReceivable(r.应收金额),
+                                    productRefundAmount = OrderAmountRules.ReadProductRefund(r.商品已退款金额),
+                                    orderRefundStatus = r.退款状态.Trim(),
                                     sended = false,
                                     tel = r.手机号,
                                     tag = Path.GetFileNameWithoutExtension(file.Name),
@@ -136,20 +170,18 @@ namespace CookieSheet
                                     userId = user.userId
                                 };
                                 user.orders.Add(order);
+                                // Later rows in this file update this same order, even if
+                                // the repeated row contains different contact information.
+                                existingOrders.Add(order.orderId, order);
                                 ordersToUpdate.Add(order);
                                 orderAdded++;
                             }
                             else
                             {
-                                order.orderedAt = ParseUtc8DateTime(r.下单时间);
-                                order.productName = r.商品名称.Split(';');
-                                order.productModel = (r.商品型号 == "" ? r.商品名称 : r.商品型号).Split(';');
-                                order.productCount = ParseProductCounts(r.商品件数);
-                                order.productId = r.商品ID.Split(';');
-                                order.productUnitPrice = OrderImportPricing.Read(r.商品单价, r.运费, decimal.Parse(r.实付金额), order.productCount);
                                 order.price = decimal.Parse(r.实付金额);
-                                order.tel = r.手机号;
-                                order.tag = Path.GetFileNameWithoutExtension(file.Name);
+                                order.receivableAmount = OrderAmountRules.ReadReceivable(r.应收金额);
+                                order.productRefundAmount = OrderAmountRules.ReadProductRefund(r.商品已退款金额);
+                                order.orderRefundStatus = r.退款状态.Trim();
                                 if (!ordersToUpdate.Contains(order)) ordersToUpdate.Add(order);
                             }
                         }
@@ -157,23 +189,20 @@ namespace CookieSheet
 
                     StatusTextBlock.Text = "正在提交变更到服务器...";
                     
-                    if (usersToUpdate.Count > 0)
+                    var gifts = new ApiService.GiftRecalculationResult(0, 0, 0);
+                    if (ordersToUpdate.Count > 0 || postageOrdersToUpdate.Count > 0 || closedOrderIds.Count > 0)
                     {
-                        var newUsers = await ApiService.SaveUsersBatchAsync(usersToUpdate);
-                        AssignImportedOrderUserIds(newUsers, ordersToUpdate);
+                        var batches = previousBatches.Concat(closedBatches).Concat(postageOrdersToUpdate.Select(o => o.tag))
+                            .Concat(ordersToUpdate.Count > 0 ? new[] { tag } : Array.Empty<string>());
+                        var choices = await AskGiftChoicesAsync(batches);
+                        gifts = await ApiService.ImportOrdersAsync(tag, ordersToUpdate, usersToUpdate, postageOrdersToUpdate, choices, closedOrderIds);
                     }
-
-                    if (ordersToUpdate.Count > 0) await ApiService.SaveOrdersBatchAsync(ordersToUpdate);
-
-                    await ApiService.RefreshCacheAsync();
-
-                    await Process满赠(Path.GetFileNameWithoutExtension(file.Name), await DialogHelper.ShowConfirmationDialogAsync(XamlRoot, "提示", "是否要计算满赠？"));
-                    
-                    await ProcessSet赠(Path.GetFileNameWithoutExtension(file.Name), await DialogHelper.ShowConfirmationDialogAsync(XamlRoot, "提示", "是否要计算Set赠？"));
                     await ApiService.RefreshCacheAsync();
 
 
-                    StatusTextBlock.Text = $"导入成功！新增/更新用户: {userAdded}, 新增订单: {orderAdded}。";
+                    StatusTextBlock.Text = $"导入成功！新增用户: {userAdded}，新增订单: {orderAdded}，更新已有订单: {repeatedIds.Count} 笔，其中 {movedCount} 笔已移入批次「{tag}」。"
+                        + $"\n已跳过 {closedOrderIds.Count} 笔关闭商品订单；库中对应旧订单已删除，金额、商品数量和赠品已重新计算。"
+                        + "\n" + GiftSummary(gifts);
 
                     if (tempError.Count > 0)
                     {
@@ -219,23 +248,36 @@ namespace CookieSheet
                     StatusTextBlock.Text = $"没有可导入的成功退款记录，已跳过 {result.SkippedRows} 条非成功记录。";
                     return;
                 }
+                await ApiService.RefreshCacheAsync();
+                var refundOrderIds = result.Records.Select(r => r.orderId).ToHashSet(StringComparer.Ordinal);
+                var batches = (await ApiService.GetCachedOrdersAsync()).Where(o => refundOrderIds.Contains(o.orderId)).Select(o => o.tag);
+                var choices = await AskGiftChoicesAsync(batches);
                 StatusTextBlock.Text = $"正在保存 {result.Records.Count} 条退款记录…";
-                var summary = await ApiService.SaveRefundsBatchAsync(result.Records);
+                var summary = await ApiService.SaveRefundsBatchAsync(result.Records, choices);
                 saved = true;
                 await ApiService.RefreshCacheAsync();
                 var orders = (await ApiService.GetCachedOrdersAsync()).ToDictionary(o => o.orderId);
-                var matchable = result.Records.Where(r => !RefundRules.IsPostageProduct(r.productName, r.productModel)).ToList();
-                var postage = result.Records.Count - matchable.Count;
+                var activeIds = (await ApiService.GetCachedRefundsAsync()).Select(r => r.refundId).ToHashSet();
+                var activeRecords = result.Records.Where(r => activeIds.Contains(r.refundId)).ToList();
+                var matchable = activeRecords.Where(r => !RefundRules.IsPostageProduct(r.productName, r.productModel)).ToList();
+                var postage = activeRecords.Count - matchable.Count;
                 var unmatched = matchable.Count(r => !orders.ContainsKey(r.orderId));
                 var unmatchedProduct = matchable.Count(r => orders.TryGetValue(r.orderId, out var order)
                     && !order.GetOrderedProducts().Any(p => RefundCalculator.Matches(p, r)));
                 var affected = matchable.Select(r => r.orderId).ToHashSet();
                 var review = orders.Values.Where(o => affected.Contains(o.orderId))
                     .Sum(o => o.ProductRefunds.Count(p => p.Status == ProductRefundStatus.NeedsReview));
-                StatusTextBlock.Text = $"退款导入完成：新增 {summary.Added} 条，更新 {summary.Updated} 条，保留较新记录 {summary.Unchanged} 条。\n"
+                var awaiting = orders.Values.Where(o => affected.Contains(o.orderId))
+                    .Sum(o => o.ProductRefunds.Count(p => p.Status == ProductRefundStatus.AwaitingDetails));
+                var invalid = orders.Values.Where(o => affected.Contains(o.orderId))
+                    .Sum(o => o.ProductRefunds.Count(p => p.Status == ProductRefundStatus.InvalidDetails));
+                StatusTextBlock.Text = $"退款导入完成：新增 {summary.Added} 条，覆盖 {summary.Updated} 条。\n"
+                    + $"跳过已删除退款 {summary.DeletedSkipped} 条（按退款编号识别，不会恢复）。\n"
+                    + (summary.Unchanged > 0 ? $"服务器保留旧记录 {summary.Unchanged} 条；请升级服务器以支持顺序覆盖。\n" : "")
                     + $"跳过非成功退款 {result.SkippedRows + summary.Skipped} 条；文件内重复退款编号合并 {result.DuplicateRows} 条；补邮退款 {postage} 条不参与匹配。\n"
-                    + $"等待原订单 {unmatched} 条，未匹配商品 {unmatchedProduct} 条，数量待核对 {review} 项。\n"
-                    + "成功退款记录已独立保存；后续导入原订单会自动匹配。";
+                    + $"等待原订单 {unmatched} 条，未匹配商品 {unmatchedProduct} 条，数量待核对 {review} 项，待导入退款明细 {awaiting} 项，退款明细有误 {invalid} 项（按未退款保留原件数发货）。\n"
+                    + "成功退款记录已独立保存，已匹配商品的退款信息和已售出件数已更新；订单金额及其颜色仍以订单表为准。\n"
+                    + GiftSummary(summary.Gifts);
             }
             catch (Exception ex)
             {
@@ -245,147 +287,28 @@ namespace CookieSheet
             finally { SetImportEnabled(true); }
         }
 
-        private async Task Process满赠(string tag, bool process)
+        private async Task<List<BatchGiftChoice>> AskGiftChoicesAsync(IEnumerable<string> batches)
         {
-            var users = await ApiService.GetCachedUsersAsync();
-            var ordersToUpdate = new List<order>();
-
-            foreach (var user in users)
+            var choices = new List<BatchGiftChoice>();
+            foreach (var batch in batches.Distinct(StringComparer.Ordinal).OrderBy(b => b, StringComparer.Ordinal))
             {
-                var orders = user.orders.Where(x => x.tag == tag).OrderBy(x => x.orderedAt).ToList();
-                decimal totalAmount = 0;
-
-                foreach (var order in orders)
-                {
-                    totalAmount += order.price;
-                    if (RemoveProduct(order, "99满赠"))
-                    {
-                        if (!ordersToUpdate.Contains(order)) ordersToUpdate.Add(order);
-                    }
-                }
-
-                if (process)
-                {
-                    int bonusCount = (int)(totalAmount / 99);
-
-                    if (bonusCount > 0 && orders.Count > 0)
-                    {
-                        var lastOrder = orders.Last();
-                        AddProduct(lastOrder, "99满赠", "99满赠", bonusCount);
-                        if (!ordersToUpdate.Contains(lastOrder)) ordersToUpdate.Add(lastOrder);
-                    }
-                }
+                StatusTextBlock.Text = $"请确认批次「{batch}」本次是否计算赠品。";
+                var full = await DialogHelper.ShowConfirmationDialogAsync(XamlRoot, "是否计算满赠",
+                    $"批次：{batch}\n是否重新计算满赠？\n选“是”：按当前实付总额重新计算。\n选“否”：清除该批次旧满赠。\n本次选择会覆盖此前选择。");
+                var set = await DialogHelper.ShowConfirmationDialogAsync(XamlRoot, "是否计算 Set赠",
+                    $"批次：{batch}\n是否重新计算 Set赠？\n选“是”：按扣除退款后的件数重新计算；退款件数不明时暂不生成，并提示待核对。\n选“否”：清除该批次旧 Set赠。\n本次选择会覆盖此前选择。");
+                choices.Add(new() { Batch = batch, FullGift = full, SetGift = set });
             }
-
-            if (ordersToUpdate.Count > 0) await ApiService.SaveOrdersBatchAsync(ordersToUpdate);
+            return choices;
         }
 
-        private bool RemoveProduct(order order, string targetName)
+        private static string GiftSummary(ApiService.GiftRecalculationResult? gifts)
         {
-            bool changed = false;
-            if (order.productName.Contains(targetName) || order.productModel.Contains(targetName))
-            {
-                var nameList = order.productName.ToList();
-                var modelList = order.productModel.ToList();
-                var countList = order.productCount.ToList();
-                var priceList = Enumerable.Range(0, nameList.Count).Select(i => order.productUnitPrice.ElementAtOrDefault(i)).ToList();
-                var idList = Enumerable.Range(0, nameList.Count).Select(i => order.productId.ElementAtOrDefault(i) ?? "").ToList();
-
-                for (int i = nameList.Count - 1; i >= 0; i--)
-                {
-                    if ((i < nameList.Count && nameList[i] == targetName) || (i < modelList.Count && modelList[i] == targetName))
-                    {
-                        if (i < nameList.Count) nameList.RemoveAt(i);
-                        if (i < modelList.Count) modelList.RemoveAt(i);
-                        if (i < countList.Count) countList.RemoveAt(i);
-                        priceList.RemoveAt(i);
-                        idList.RemoveAt(i);
-                        changed = true;
-                    }
-                }
-
-                order.productName = nameList.ToArray();
-                order.productModel = modelList.ToArray();
-                order.productCount = countList.ToArray();
-                order.productUnitPrice = priceList.ToArray();
-                order.productId = idList.ToArray();
-            }
-            return changed;
-        }
-
-        private void AddProduct(order order, string name, string model, int count)
-        {
-            var nameList = order.productName.ToList();
-            var modelList = order.productModel.ToList();
-            var countList = order.productCount.ToList();
-            var priceList = Enumerable.Range(0, nameList.Count).Select(i => order.productUnitPrice.ElementAtOrDefault(i)).ToList();
-            var idList = Enumerable.Range(0, nameList.Count).Select(i => order.productId.ElementAtOrDefault(i) ?? "").ToList();
-
-            nameList.Add(name);
-            modelList.Add(model);
-            countList.Add(count);
-            priceList.Add(0);
-            idList.Add("");
-
-            order.productName = nameList.ToArray();
-            order.productModel = modelList.ToArray();
-            order.productCount = countList.ToArray();
-            order.productUnitPrice = priceList.ToArray();
-            order.productId = idList.ToArray();
-        }
-
-        private async Task ProcessSet赠(string tag, bool process)
-        {
-            var allOrders = await ApiService.GetCachedOrdersAsync();
-            var requiredProducts = allOrders
-                .Where(o => o.tag == tag)
-                .SelectMany(o => o.productModel)
-                .Distinct()
-                .Where(n => n != "99满赠" && n != "Set赠")
-                .ToList();
-
-            if (requiredProducts.Count == 0) return;
-
-            var users = await ApiService.GetCachedUsersAsync();
-            var ordersToUpdate = new List<order>();
-
-            foreach (var user in users)
-            {
-                var userOrders = user.orders.Where(x => x.tag == tag).OrderBy(x => x.orderedAt).ToList();
-                if (userOrders.Count == 0) continue;
-
-                var productCounts = requiredProducts.ToDictionary(p => p, p => 0);
-
-                foreach (var order in userOrders)
-                {
-                    if (RemoveProduct(order, "Set赠"))
-                    {
-                         if (!ordersToUpdate.Contains(order)) ordersToUpdate.Add(order);
-                    }
-
-                    for (int i = 0; i < order.productCount.Length; i++)
-                    {
-                        var name = order.productModel[i];
-                        if (requiredProducts.Contains(name))
-                        {
-                            productCounts[name] += order.productCount[i];
-                        }
-                    }
-                }
-
-                if (process)
-                {
-                    var bonusCount = productCounts.Values.Min();
-                    if (bonusCount > 0)
-                    {
-                        var lastOrder = userOrders.Last();
-                        AddProduct(lastOrder, "Set赠", "Set赠", bonusCount);
-                        if (!ordersToUpdate.Contains(lastOrder)) ordersToUpdate.Add(lastOrder);
-                    }
-                }
-            }
-
-            if (ordersToUpdate.Count > 0) await ApiService.SaveOrdersBatchAsync(ordersToUpdate);
+            if (gifts == null || gifts.Orders == 0) return "没有需要重算赠品的关联订单。";
+            return $"已按本次选择更新 {gifts.Batches} 个相关批次、{gifts.Orders} 笔订单的赠品；未选择计算的赠品已清除。"
+                + (gifts.PendingSetGroups > 0
+                    ? $"\n其中 {gifts.PendingSetGroups} 个用户批次的退款件数待核对，已清除旧 Set赠并暂不生成；补齐退款明细后再次导入并选择计算。"
+                    : "");
         }
 
         private static int[] ParseProductCounts(string rawCounts)
@@ -433,24 +356,5 @@ namespace CookieSheet
                 .All(string.IsNullOrWhiteSpace);
         }
 
-        private static void AssignImportedOrderUserIds(List<user> newUsers, List<order> ordersToUpdate)
-        {
-            if (newUsers.Count == 0 || ordersToUpdate.Count == 0)
-            {
-                return;
-            }
-
-            foreach (var importedOrder in ordersToUpdate.Where(order => order.user != null))
-            {
-                var newUser = !string.IsNullOrWhiteSpace(importedOrder.user.qq)
-                    ? newUsers.FirstOrDefault(user => user.qq == importedOrder.user.qq)
-                    : newUsers.FirstOrDefault(user => user.tel == importedOrder.user.tel);
-
-                if (newUser != null)
-                {
-                    importedOrder.userId = newUser.userId;
-                }
-            }
-        }
     }
 }

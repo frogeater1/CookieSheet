@@ -23,10 +23,11 @@ public class order
     public string[] productModel { get; set; }
     
     public int[] productCount { get; set; }
-    public decimal[] productUnitPrice { get; set; } = [];
-    public string[] productId { get; set; } = [];
 
     public decimal price { get; set; }
+    public decimal? receivableAmount { get; set; }
+    public decimal? productRefundAmount { get; set; }
+    public string orderRefundStatus { get; set; } = "";
     
     public bool sended { get; set; }
 

@@ -506,29 +506,6 @@ namespace CookieSheet
             }
         }
 
-        private async void OnClearDataClick(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                if (await DialogHelper.ShowConfirmationDialogAsync(XamlRoot, "危险操作确认", "确定要彻底清空所有数据吗？\n此操作将删除所有用户和订单数据，且无法恢复！"))
-                {
-                    await ApiService.ClearDataAsync();
-
-                    Results.Clear();
-                    ResultsTitle.Text = "数据已清空";
-                    EmptyStateText.Visibility = Visibility.Visible;
-                    EmptyStateText.Text = "数据库已重置。";
-
-                    await DialogHelper.ShowErrorDialogAsync(XamlRoot, "数据已成功清空。"); // Re-using ErrorDialog for simple message
-                }
-            }
-            catch (Exception ex)
-            {
-                DebugConsole.Log(ex);
-                await DialogHelper.ShowErrorDialogAsync(XamlRoot, "清空失败: " + ex.Message);
-            }
-        }
-
         private async void OnExportExcelClick(object sender, RoutedEventArgs e)
         {
             try
@@ -745,22 +722,48 @@ namespace CookieSheet
         {
             if (sender is Button btn && btn.DataContext is order order)
             {
+                if (!btn.IsEnabled || order.sended) return;
+                var previous = order.sended;
+                btn.IsEnabled = false;
                 try
                 {
                     order.sended = true;
                     await ApiService.SaveOrderAsync(order);
-
-                    // Reload data to reflect changes
-                    // Check if we are currently filtering by unsent
-                    bool isUnsentFilter = ResultsTitle.Text.Contains("未补邮");
-                    LoadInitialData(isUnsentFilter);
+                    // Update in place so search results, expanded users and scroll position stay intact.
+                    foreach (var vm in Results.Where(vm => vm.Orders.Any(o => o.orderId == order.orderId)))
+                    {
+                        foreach (var displayed in vm.Orders.Where(o => o.orderId == order.orderId)) displayed.sended = true;
+                        vm.NotifyPostageChanged();
+                    }
                 }
                 catch (Exception ex)
                 {
+                    order.sended = previous;
                     DebugConsole.Log(ex);
                     await DialogHelper.ShowErrorDialogAsync(this.XamlRoot, "更新状态失败: " + ex.Message);
                 }
+                finally { btn.IsEnabled = true; }
             }
+        }
+
+        private async void OnDeleteOrderClick(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { DataContext: order selected }) return;
+            ResultsList.IsEnabled = false;
+            try
+            {
+                if (!await OrderDeletionDialog.ShowAsync(XamlRoot, selected.orderId)) return;
+                var latest = (await ApiService.GetCachedOrdersAsync()).ToDictionary(o => o.orderId);
+                // Preserve the current search/groups and expanded users instead of returning to all users.
+                foreach (var vm in Results)
+                    vm.ReplaceOrders(vm.Orders.Where(o => latest.ContainsKey(o.orderId))
+                        .Select(o => latest[o.orderId]).ToList());
+            }
+            catch (Exception ex)
+            {
+                await DialogHelper.ShowErrorDialogAsync(XamlRoot, "列表更新失败，请刷新数据。\n" + ex.Message);
+            }
+            finally { ResultsList.IsEnabled = true; }
         }
 
         private async void OnOverLimitCheckClick(object sender, RoutedEventArgs e)

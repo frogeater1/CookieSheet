@@ -24,11 +24,11 @@ public class PostageRecognitionTests
     [Fact]
     public void PostageModelDoesNotMatchRefundsOrEnterUnmatchedList()
     {
-        var product = new OrderedProduct("补邮或者补差价", "非偏远地区补邮", 1, 8, "postage-id");
+        var product = new OrderedProduct("补邮或者补差价", "非偏远地区补邮", 1);
         var refund = new RefundRecord
         {
             refundId = "postage-refund", orderId = "o1", productName = product.Name,
-            productModel = product.Model, productId = product.ProductId,
+            productModel = product.Model,
             status = "退款成功", refundAmount = 8, productPaidAmount = 8
         };
 
@@ -46,9 +46,9 @@ public class PostageRecognitionTests
     {
         var products = new[]
         {
-            new OrderedProduct("补邮或者补差价", "非偏远地区补邮", 1, 8),
-            new OrderedProduct("补邮或者补差价", "补差价", 2, 3),
-            new OrderedProduct("非偏远地区补邮", "", 1, 8)
+            new OrderedProduct("补邮或者补差价", "非偏远地区补邮", 1),
+            new OrderedProduct("补邮或者补差价", "补差价", 2),
+            new OrderedProduct("非偏远地区补邮", "", 1)
         };
         var result = SoldProductsQuery.Apply([new("o1", "批次", RefundCalculator.Calculate("o1", products, []))]);
         Assert.Equal(2, result.Products.Count);

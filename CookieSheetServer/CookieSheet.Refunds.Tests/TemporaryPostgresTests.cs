@@ -77,11 +77,11 @@ public class TemporaryPostgresTests
             requestedAt = now.AddMinutes(-5), completedAt = status == "退款成功" ? now : null,
             sourceFile = "temporary-integration-test.xlsx"
         };
-        order Order(string suffix, decimal unitPrice = 7) => new()
+        order Order(string suffix) => new()
         {
             orderId = prefix + "-" + suffix, userId = testOwner.userId, tel = "", orderedAt = now,
             productName = ["临时测试企划"], productModel = ["明信片"], productCount = [5],
-            productUnitPrice = [unitPrice], productId = ["demo-postcard"], price = 35, tag = "退款测试-" + suffix
+            price = 35, tag = "退款测试-" + suffix
         };
 
         var partial = Order("买5退3");
@@ -99,7 +99,7 @@ public class TemporaryPostgresTests
         Assert.Equal("退款成功", (await Get<RefundRecord>(http, "/api/refunds")).Single(r => r.refundId == partialRefund.refundId).status);
 
         var full = Order("分两次全退");
-        var legacy = Order("旧订单无单价", 0);
+        var legacy = Order("旧订单无单价");
         var review = Order("非整件金额");
         var excess = Order("超额退款");
         var pending = Order("待处理");
@@ -115,7 +115,7 @@ public class TemporaryPostgresTests
         Assert.Equal(5, (await Result(http, full.orderId)).RefundedQuantity);
         Assert.Equal(3, (await Result(http, legacy.orderId)).RefundedQuantity);
         Assert.Equal(ProductRefundStatus.NeedsReview, (await Result(http, review.orderId)).Status);
-        Assert.Equal(ProductRefundStatus.NeedsReview, (await Result(http, excess.orderId)).Status);
+        Assert.Equal(ProductRefundStatus.InvalidDetails, (await Result(http, excess.orderId)).Status);
         Assert.Equal(ProductRefundStatus.None, (await Result(http, pending.orderId)).Status);
         Assert.Equal(ProductRefundStatus.None, (await Result(http, cancelled.orderId)).Status);
         Assert.DoesNotContain(await Get<RefundRecord>(http, "/api/refunds"), r => r.refundId == prefix + "-pending" || r.refundId == prefix + "-cancelled");
@@ -128,7 +128,11 @@ public class TemporaryPostgresTests
         Assert.Equal(3, (await Result(http, statusOrder.orderId)).RefundedQuantity);
 
         var conflict = Refund("partial", prefix + "-wrong-order", 21);
-        using var bad = await http.PostAsJsonAsync("/api/refunds/batch", new[] { Refund("must-not-save", partial.orderId, 1), conflict });
+        using var bad = await http.PostAsJsonAsync("/api/refunds/import-with-gifts", new
+        {
+            Records = new[] { Refund("must-not-save", partial.orderId, 1), conflict },
+            GiftChoices = Array.Empty<BatchGiftChoice>()
+        });
         Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
         Assert.Equal(0L, await Scalar<long>(db, "select count(*) from refunds where \"refundId\" = @id", prefix + "-must-not-save"));
         Assert.Equal(21m, await Scalar<decimal>(db, "select \"refundAmount\" from refunds where \"refundId\" = @id", partialRefund.refundId));
@@ -137,7 +141,6 @@ public class TemporaryPostgresTests
         await using var reopened = new NpgsqlConnection(connectionString);
         await reopened.OpenAsync();
         Assert.Equal(5, await Scalar<int>(reopened, "select \"productCount\"[1] from \"order\" where \"orderId\" = @id", partial.orderId));
-        Assert.Equal(7m, await Scalar<decimal>(reopened, "select \"productUnitPrice\"[1] from \"order\" where \"orderId\" = @id", partial.orderId));
         var report = new
         {
             testedAt = DateTimeOffset.Now, database = connection.Database, api = apiUrl,
@@ -156,7 +159,16 @@ public class TemporaryPostgresTests
     private static async Task<List<T>> Get<T>(HttpClient client, string route) => await client.GetFromJsonAsync<List<T>>(route) ?? [];
     private static async Task Post<T>(HttpClient client, string route, T payload)
     {
-        using var response = await client.PostAsJsonAsync(route, payload);
+        object body = payload!;
+        if (route == "/api/refunds/batch" && payload is IEnumerable<RefundRecord> records)
+        {
+            var ids = records.Select(r => r.orderId).ToHashSet();
+            var choices = (await Get<order>(client, "/api/orders")).Where(o => ids.Contains(o.orderId))
+                .Select(o => o.tag).Distinct().Select(b => new BatchGiftChoice { Batch = b }).ToList();
+            route = "/api/refunds/import-with-gifts";
+            body = new { Records = records, GiftChoices = choices };
+        }
+        using var response = await client.PostAsJsonAsync(route, body);
         Assert.True(response.IsSuccessStatusCode, $"{route}: {(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
     }
     private static async Task<user> AddUser(HttpClient client, string name)
@@ -168,7 +180,7 @@ public class TemporaryPostgresTests
     private static List<ProductRefundResult> Calculate(order order, List<RefundRecord> refunds) =>
         RefundCalculator.Calculate(order.orderId,
             order.productCount.Select((count, i) => new OrderedProduct(order.productName.ElementAtOrDefault(i) ?? "", order.productModel.ElementAtOrDefault(i) ?? "",
-                count, order.productUnitPrice.ElementAtOrDefault(i), order.productId.ElementAtOrDefault(i) ?? "")).ToList(), refunds);
+                count)).ToList(), refunds);
     private static async Task<ProductRefundResult> Result(HttpClient client, string orderId)
     {
         var order = (await Get<order>(client, "/api/orders")).Single(o => o.orderId == orderId);

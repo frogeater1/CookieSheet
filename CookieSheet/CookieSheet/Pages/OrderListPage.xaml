@@ -83,7 +83,8 @@
                             <ComboBoxItem Content="有退款" Tag="AnyRefund" />
                             <ComboBoxItem Content="含全退商品" Tag="Full" />
                             <ComboBoxItem Content="含部分退款商品" Tag="Partial" />
-                            <ComboBoxItem Content="数量待核对" Tag="NeedsReview" />
+                            <ComboBoxItem Content="待导入退款明细" Tag="AwaitingDetails" />
+                            <ComboBoxItem Content="退款明细有误" Tag="InvalidDetails" />
                             <ComboBoxItem Content="无退款" Tag="None" />
                         </ComboBox>
                         <ComboBox x:Name="SortOrder" Grid.Column="2" Header="时间排序" SelectedIndex="0" MinWidth="0"
@@ -112,7 +113,7 @@
                           HorizontalScrollMode="Enabled" HorizontalScrollBarVisibility="Auto"
                           VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Disabled"
                           VerticalContentAlignment="Stretch">
-                <ListView x:Name="OrdersList" SelectionMode="None" MinWidth="920"
+                <ListView x:Name="OrdersList" SelectionMode="None" MinWidth="1000"
                           Width="{x:Bind OrdersViewport.ViewportWidth, Mode=OneWay}"
                           HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollMode="Disabled"
                           ScrollViewer.HorizontalScrollBarVisibility="Disabled">
@@ -139,31 +140,34 @@
                                     <ColumnDefinition Width="150" />
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="100" />
+                                    <ColumnDefinition Width="72" />
                                 </Grid.ColumnDefinitions>
 
                                 <TextBlock Text="{x:Bind ShortOrderedAtText}" VerticalAlignment="Center"
-                                           TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" MaxLines="1"
+                                           TextWrapping="Wrap" TextTrimming="None"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                            IsTextSelectionEnabled="True" ToolTipService.ToolTip="{x:Bind OrderedAtText}" />
                                 <TextBlock Grid.Column="1" Text="{x:Bind OrderId}" VerticalAlignment="Center"
-                                           FontWeight="SemiBold" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" MaxLines="1"
+                                           FontWeight="SemiBold" TextWrapping="Wrap" TextTrimming="None"
                                            IsTextSelectionEnabled="True" ToolTipService.ToolTip="{x:Bind OrderId}" />
                                 <TextBlock Grid.Column="2" Text="{x:Bind TagText}" VerticalAlignment="Center" Margin="8,0"
-                                           TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" MaxLines="1" IsTextSelectionEnabled="True"
+                                           TextWrapping="Wrap" TextTrimming="None" IsTextSelectionEnabled="True"
                                            ToolTipService.ToolTip="{x:Bind TagText}"
                                            Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
                                 <TextBlock Grid.Column="3" Text="{x:Bind UserName}" VerticalAlignment="Center" Margin="8,0"
-                                           TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" MaxLines="1"
+                                           TextWrapping="Wrap" TextTrimming="None"
                                            IsTextSelectionEnabled="True" ToolTipService.ToolTip="{x:Bind UserDetails}" />
                                 <TextBlock Grid.Column="4" Text="{x:Bind UserQq}" VerticalAlignment="Center" Margin="8,0"
-                                           TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" MaxLines="1"
+                                           TextWrapping="Wrap" TextTrimming="None"
                                            IsTextSelectionEnabled="True" ToolTipService.ToolTip="{x:Bind UserQq}" />
                                 <TextBlock Grid.Column="5" helpers:ProductRefundText.Items="{x:Bind ProductRefunds}" VerticalAlignment="Center" Margin="8,0"
-                                           TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" MaxLines="1"
+                                           TextWrapping="Wrap" TextTrimming="None"
                                            IsTextSelectionEnabled="True" />
                                 <TextBlock Grid.Column="6" Text="{x:Bind PriceText}" VerticalAlignment="Center"
-                                           TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" MaxLines="1"
+                                           TextWrapping="Wrap" TextTrimming="None"
                                            HorizontalAlignment="Right" Margin="0,0,16,0" IsTextSelectionEnabled="True" />
+                                <Button Grid.Column="7" Content="删除" Tag="{x:Bind OrderId}" Click="OnDeleteOrderClick"
+                                        FontSize="12" Padding="4,0" MinHeight="24" VerticalAlignment="Center" />
                             </Grid>
                         </DataTemplate>
                     </ListView.ItemTemplate>

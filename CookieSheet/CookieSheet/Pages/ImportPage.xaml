@@ -13,6 +13,8 @@
             <FontIcon Glyph="&#xE8F4;" FontSize="64" />
             <TextBlock Text="数据导入" FontSize="28" FontWeight="SemiBold" HorizontalAlignment="Center" />
             <TextBlock Text="订单表文件名表示批次；退款表可以先于订单表导入。" HorizontalAlignment="Center" Foreground="Gray" />
+            <TextBlock Text="已关闭订单不导入；若同编号订单已存在，则删除原订单并重新计算相关统计和赠品。" HorizontalAlignment="Center" Foreground="Gray" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="600" Margin="16,0" />
+            <TextBlock Text="同编号订单更新金额，批次以最后导入的订单表为准，补邮状态和原商品保留。每次导入逐批询问是否计算满赠和 Set赠，以本次选择为准；不计算则清除对应旧赠品。Set赠按退款后剩余件数计算，件数不明时暂不生成。" HorizontalAlignment="Center" Foreground="Gray" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="600" Margin="16,0" />
 
             <Button x:Name="OrderImportButton" Content="导入订单表（.xls / .xlsx）" Click="OnImportClick" HorizontalAlignment="Center" Width="240" Height="40" />
             <Button x:Name="RefundImportButton" Content="导入退款表（.xls / .xlsx）" Click="OnRefundImportClick" HorizontalAlignment="Center" Width="240" Height="40" />

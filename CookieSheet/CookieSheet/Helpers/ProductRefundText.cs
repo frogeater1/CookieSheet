@@ -9,7 +9,7 @@ using Microsoft.UI.Xaml.Media;
 
 namespace CookieSheet.Helpers;
 
-// Runs preserve per-product colors inside the existing single-line, ellipsized TextBlock.
+// Runs preserve per-product colors while the TextBlock wraps to its available column width.
 public static class ProductRefundText
 {
     public static readonly DependencyProperty ItemsProperty = DependencyProperty.RegisterAttached(
